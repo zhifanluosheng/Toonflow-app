@@ -1,0 +1,5 @@
+# dsh-toonflow bundle patch —— 标准工作台形态。
+# 只把服务挂在这个 Harness 里，由客户侧 desktopWorkbenches.register() 注册面板。
+- insert:
+    - id: toonflow            # 独立项目 id，便于在配置里定位到这一行
+      name: dsh-toonflow      # 必须和 npm 包名一致（Node 模块解析用）
