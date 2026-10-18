@@ -90,7 +90,33 @@ export async function writeClipboardImage(image: Blob): Promise<void> {
   await navigator.clipboard.write([new ClipboardItem({ "image/png": await imagePngBlob(image) })]);
 }
 export async function writeClipboardText(text: string): Promise<void> {
-  if (!isDesktop) return navigator.clipboard.writeText(text);
+  if (!isDesktop) {
+    // 先走选区复制：同步执行、保留用户手势，嵌入宿主拒绝 Clipboard API 时也能用；
+    // 失败再退回异步 API（普通浏览器里两者都可用）。
+    if (legacyCopyText(text)) return;
+    await navigator.clipboard.writeText(text);
+    return;
+  }
   const { data } = await axios.post<{ code: number; message: string }>("/api/desktop/clipboard/write", { text }, { headers });
   if (data.code !== 200) throw new Error(data.message || "写入剪贴板失败");
+}
+
+function legacyCopyText(text: string): boolean {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "0";
+  area.style.left = "-9999px";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  try {
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(area);
+  }
 }

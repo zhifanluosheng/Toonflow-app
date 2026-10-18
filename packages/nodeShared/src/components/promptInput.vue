@@ -2,7 +2,7 @@
   <div class="promptInputWrap nodrag nopan nowheel">
     <el-button v-if="expandable" class="expandButton" :icon="IconMaximize" text circle title="展开编辑提示词" aria-label="展开编辑提示词" @mousedown.prevent @click.stop="expanded = true" />
     <teleport :to="expandedTarget || 'body'" :disabled="!expanded || !expandedTarget">
-      <div ref="senderElement" class="promptInput nodrag nopan nowheel" :class="{ expandedInput: expanded }" @keydown.capture="handleMentionKey" @click.capture="previewReference" />
+      <div ref="senderElement" class="promptInput nodrag nopan nowheel" :class="{ expandedInput: expanded }" @keydown.capture="handleMentionKey" @click.capture="handleEditorClick" />
     </teleport>
   </div>
   <el-dialog v-if="expandable" v-model="expanded" class="promptEditorDialog" title="生成提示词" width="80%" alignCenter appendToBody :closeOnClickModal="false" @opened="sender?.focus('mark')" @close="expanded = false" @closed="sender?.focus('mark')">
@@ -38,6 +38,22 @@ function previewReference(event: MouseEvent) {
   event.stopPropagation();
   sender?.bus.emit(xSender.EventSet.EVENT_COMMON_DIALOG_CLOSE);
   previewReferenceId.value = reference.id;
+}
+
+/**
+ * 点击编辑区内的空白处也要能进入输入状态。
+ * x-sender 只在可编辑行（.chat-grid-wrap）上聚焦；节点里的输入框高度比那一行大，
+ * 点到下方padding 区域时事件落在滚动容器上，光标不会出现。
+ */
+function handleEditorClick(event: MouseEvent) {
+  previewReference(event);
+  const target = event.target instanceof Element ? event.target : null;
+  const container = senderElement.value;
+  if (!target || !container || !container.contains(target)) return;
+  if (target.closest('[data-set-richtype="richWrap"]')) return;
+  if (target.closest('button, a, .imageReference')) return;
+  const editor = (sender as unknown as { chatEditor?: { focusLast?: () => void } } | undefined)?.chatEditor;
+  editor?.focusLast?.();
 }
 
 function referenceHtml(reference: MentionItem & { value: string }) {
@@ -337,6 +353,18 @@ function handleMentionKey(event: KeyboardEvent) {
 .promptInputWrap {
   position: relative;
   margin: 12px 0 16px;
+
+  /* 可编辑区域撑满整个输入框：否则只有占位文字那一行能点进光标。 */
+  :deep(.chat-rich-text) {
+    display: flex;
+    flex-direction: column;
+    cursor: text;
+  }
+
+  :deep(.chat-rich-text > [data-set-richtype="richWrap"]) {
+    flex: 1 1 auto;
+    box-sizing: border-box;
+  }
 
   .expandButton {
     position: absolute;

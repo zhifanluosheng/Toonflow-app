@@ -610,6 +610,15 @@ watch(
     left: 50%;
     z-index: 2;
     transform: translateX(-50%);
+    /* 这些浮层是 nodrag 区域：不要继承节点的 grab 光标，否则看起来能拖却拖不动。 */
+    cursor: default;
+
+    :is(button, [role="button"], select, summary, a) {
+      cursor: pointer;
+    }
+    :is(input, textarea, [contenteditable="true"], .el-input__inner) {
+      cursor: text;
+    }
 
     &.topSlot {
       bottom: calc(100% + 12px);
