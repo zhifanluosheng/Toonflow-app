@@ -1,6 +1,6 @@
 <template>
   <div class="workspaceMenu">
-    <el-card shadow="never" :bodyStyle="{ padding: '3px 6px' }">
+    <el-card shadow="never" :bodyStyle="{ padding: '2px 4px' }">
       <div class="menuContent">
         <el-button class="toolButton" text aria-label="退出项目" title="退出项目" @click="exitVisible = true">
           <icon-logout :size="18" aria-hidden="true" />
@@ -49,11 +49,11 @@ async function exitProject() {
   .menuContent {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
 
     .toolButton {
-      width: 32px;
-      height: 32px;
+      width: 28px;
+      height: 28px;
       margin: 0;
       padding: 0;
     }

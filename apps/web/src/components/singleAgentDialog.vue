@@ -70,6 +70,7 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, useSlots, watch } f
 import { ElMessage } from "element-plus";
 import { IconArrowUp, IconChevronRight, IconPlayerPause, IconPlayerPlay, IconPlayerStopFilled } from "@tabler/icons-vue";
 import type { SingleAgentEvent } from "@toonflow/server/singleAgent/types";
+import type { ThinkingLevel } from "@toonflow/server/modelReasoning";
 import type { ToolCall } from "@toonflow/tools-scaffold/runtime";
 import modelPopover from "@/components/modelPopover.vue";
 import messageMarkdown from "@/components/messageMarkdown.vue";
@@ -89,7 +90,7 @@ const props = withDefaults(defineProps<{
 const visible = defineModel<boolean>({ default: false });
 const msgList = defineModel<AgentMessage[]>("msgList", { default: () => [] });
 const selectedModel = defineModel<string>("model", { default: "" });
-const thinkingLevel = defineModel<"off" | "low" | "medium" | "high">("thinkingLevel", { default: "off" });
+const thinkingLevel = defineModel<ThinkingLevel | undefined>("thinkingLevel", { default: undefined });
 const emit = defineEmits<{
   complete: [result: SingleAgentDialogResult];
   error: [error: Error];
@@ -105,7 +106,7 @@ const status = ref<"idle" | "running" | "pausing" | "paused">("idle");
 const busy = ref(false);
 const messageList = ref<HTMLElement>();
 const tools = computed<ToolCall[]>(() => msgList.value.flatMap(message => message.parts?.flatMap(part => part.type === "tool" ? [part.tool] : []) ?? []));
-const reasoningEffort = computed({ get: () => thinkingLevel.value === "off" ? "" : thinkingLevel.value, set: value => { thinkingLevel.value = value as typeof thinkingLevel.value || "off"; } });
+const reasoningEffort = computed({ get: () => thinkingLevel.value ?? "", set: (value: string) => { thinkingLevel.value = value ? value as ThinkingLevel : undefined; } });
 const statusLabels = { idle: "", running: "执行中", pausing: "等待当前操作结束…", paused: "已暂停，可人工操作" };
 const requestHeaders = { "x-toonflow-workspace": "1" };
 let lifecycle = new AbortController();

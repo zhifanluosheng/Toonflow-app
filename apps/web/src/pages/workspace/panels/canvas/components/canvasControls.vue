@@ -8,7 +8,7 @@
     node-color="var(--el-fill-color-dark)"
     mask-color="var(--el-mask-color-extra-light)" />
   <panel class="canvasControlsPanel" position="bottom-left">
-    <el-card class="canvasControlsCard" shadow="never" :bodyStyle="{ padding: '3px 6px' }">
+    <el-card class="canvasControlsCard" shadow="never" :bodyStyle="{ padding: '2px 4px' }">
       <div class="canvasControls">
         <el-tooltip :showArrow="false" :content="assetsVisible ? '关闭素材库' : '打开素材库'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
           <el-button
@@ -207,14 +207,14 @@ async function undoArrange() {
 </script>
 
 <style lang="scss" scoped>
-.canvasMiniMap.vue-flow__minimap { bottom: 52px; }
+.canvasMiniMap.vue-flow__minimap { bottom: 46px; }
 
 @container canvasWorkspace (max-width: 1040px) {
-  .canvasControlsPanel.vue-flow__panel { bottom: 52px; }
-  .canvasMiniMap.vue-flow__minimap { bottom: 104px; }
+  .canvasControlsPanel.vue-flow__panel { bottom: 46px; }
+  .canvasMiniMap.vue-flow__minimap { bottom: 92px; }
 }
 
-.canvasControlsCard { height: 40px; box-sizing: border-box; }
+.canvasControlsCard { height: 34px; box-sizing: border-box; }
 
 .canvasControls {
   display: flex;
@@ -226,8 +226,8 @@ async function undoArrange() {
   }
 
   .toolButton {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     flex-shrink: 0;
     margin-left: 0;
     padding: 0;

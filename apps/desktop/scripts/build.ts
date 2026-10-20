@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { cpSync, existsSync, mkdirSync, realpathSync, rmSync } from "@toonflow/file";
 import { dirname, resolve } from "node:path";
 import copyDocumentPackages from "../../server/scripts/copyDocumentPackages";
+import prepareMacDmg from "./macDmg";
 
 const projectDir = resolve(import.meta.dir, "../../..");
 const mode = process.argv[2];
@@ -66,6 +67,7 @@ if (isIntelMac) {
   process.exit(0);
 }
 const cli = resolve(projectDir, "apps/desktop/node_modules/electrobun/bin/electrobun.cjs");
+if (isMac && mode !== "dev") await prepareMacDmg();
 await $`${process.execPath} ${cli} ${mode === "dev" ? "dev" : "build"} ${mode === "dev" ? [] : ["--env=stable"]}`.cwd(projectDir);
 if (mode === "package" && !isMac) {
   await $`${process.execPath} ${resolve(import.meta.dir, "packageWindows.ts")}`.cwd(projectDir);

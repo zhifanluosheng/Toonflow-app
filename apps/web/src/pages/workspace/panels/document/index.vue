@@ -63,6 +63,7 @@ let openRevision = 0;
 let opening = Promise.resolve();
 let fileRevision = 0;
 const active = ref(true);
+const ready = ref(false);
 let refreshFileTree = () => {};
 let restoring = false;
 let rebuilding = false;
@@ -190,7 +191,7 @@ function onLayoutReady({ api }: DockviewReadyEvent) {
   disposables.push({ dispose: () => observer.disconnect() });
 }
 
-function onEditorReady({ api }: DockviewReadyEvent) {
+async function onEditorReady({ api }: DockviewReadyEvent) {
   editorApi.value = api;
   disposables.push(api.onDidActivePanelChange(panel => {
     const session = panel && sessions.get(panel.id);
@@ -214,7 +215,8 @@ function onEditorReady({ api }: DockviewReadyEvent) {
     scheduleLayoutSave();
     refreshDocuments();
   }));
-  void restoreLayout();
+  try { await restoreLayout(); }
+  finally { if (!lifetime.signal.aborted) ready.value = true; }
 }
 
 function reportError(error: unknown) { ElMessage.error(documentError(error)); }
@@ -660,7 +662,7 @@ onBeforeUnmount(() => {
   sessionWatchers.forEach(stop => stop());
   disposables.forEach(disposable => disposable.dispose());
 });
-defineExpose({ flushSave, cancelSave, getDocument, openDocument, writeDocument, performFileAction });
+defineExpose({ ready, flushSave, cancelSave, getDocument, openDocument, writeDocument, performFileAction });
 </script>
 
 <style lang="scss">

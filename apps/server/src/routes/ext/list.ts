@@ -19,6 +19,7 @@ export default Router().get("/", async (req, res) => {
           loadError: translateMessage(error instanceof Error ? error.message : "文件扩展无法读取") };
       });
       return metadata && { loadError: "", ...metadata, canManage, canConfigure: canManage, config: canManage ? u.extPlugins.getExtConfig(metadata) : {},
+        builtin: req.app.locals.builtinPlugins.ext.has(name),
         enabled: !files.some(entry => entry.name === `${name}.disabled`), url: `/api/ext/read?name=${name}` };
     }));
   res.set("Cache-Control", "no-store").json(success(extensions.filter(Boolean)));

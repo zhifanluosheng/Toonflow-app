@@ -1,6 +1,7 @@
 <template>
   <teleport to="body">
     <aside
+      v-bind="$attrs"
       v-show="visible"
       id="agentPanel"
       class="floatingAgent"

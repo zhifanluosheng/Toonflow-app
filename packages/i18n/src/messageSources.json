@@ -5501,39 +5501,6 @@
   "画布调用不存在或已结束": [
     "apps/server/src/agent/bridge/canvas.ts"
   ],
-  "提问所属对话已结束": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "提问已取消": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "发送提问失败": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "提问不存在或已结束": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "用户跳过了本次提问": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "选项不能重复": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "请按要求填写表单": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "是": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "否": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "未填写可选项": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
-  "请输入回答": [
-    "apps/server/src/agent/bridge/question.ts"
-  ],
   "画布文件无效或超过 256 MB 的读取上限": [
     "apps/server/src/agent/mentionFiles.ts"
   ],
@@ -5558,8 +5525,7 @@
   ],
   "准备执行": [
     "apps/server/src/agent/runtime/delegation.ts",
-    "apps/server/src/agent/runtime/subAgent.ts",
-    "apps/server/src/agent/tools/subAgent.ts"
+    "apps/server/src/agent/runtime/subAgent.ts"
   ],
   "子任务执行失败": [
     "apps/server/src/agent/runtime/delegation.ts",
@@ -5812,63 +5778,8 @@
     "apps/server/src/agent/tools/index.ts",
     "apps/server/src/utils/singleAgent/index.ts"
   ],
-  "read 读取最新全局记忆；save 保存合并后的完整 Markdown": [
-    "apps/server/src/agent/tools/memory.ts"
-  ],
-  "save 时必填；保留仍有效的记忆，空字符串表示清空": [
-    "apps/server/src/agent/tools/memory.ts"
-  ],
-  "save 时必填；必须使用最近一次 read 返回的 revision，禁止猜测": [
-    "apps/server/src/agent/tools/memory.ts"
-  ],
   "全局记忆": [
-    "apps/server/src/agent/tools/memory.ts",
     "apps/server/src/utils/personalization.ts"
-  ],
-  "读取或更新所有工作区共用的长期 Markdown 记忆。只能操作全局记忆文件，不能修改全局 AGENTS.md、设置或任意路径。保存前先 read，合并仍有效的内容再 save；若版本冲突，重新读取并合并，不能覆盖用户的新修改。": [
-    "apps/server/src/agent/tools/memory.ts"
-  ],
-  "本地记忆已关闭，请遵循用户的设置，不再读取或保存记忆": [
-    "apps/server/src/agent/tools/memory.ts"
-  ],
-  "保存记忆需要提供 content 和最近读取的 revision": [
-    "apps/server/src/agent/tools/memory.ts"
-  ],
-  "向父 Agent 上报的结论、进展或需要协调的问题": [
-    "apps/server/src/agent/tools/report.ts"
-  ],
-  "上报父 Agent": [
-    "apps/server/src/agent/tools/report.ts"
-  ],
-  "把当前子任务的重要进展或最终结论提交给父 Agent。报告进入父 Agent 的上下文；不替代当前与用户的直接对话，也不会自动启动空闲父 Agent。": [
-    "apps/server/src/agent/tools/report.ts"
-  ],
-  "已上报父 Agent": [
-    "apps/server/src/agent/tools/report.ts"
-  ],
-  "本次任务名称": [
-    "apps/server/src/agent/tools/subAgent.ts"
-  ],
-  "完整任务、必要背景、相对路径、已获授权和预期交付；不继承主对话历史": [
-    "apps/server/src/agent/tools/subAgent.ts"
-  ],
-  "已安装团队或远端 A2A 连接名；省略则创建临时子 Agent": [
-    "apps/server/src/agent/tools/subAgent.ts"
-  ],
-  "继续远端等待补充的 A2A task 时原样传回": [
-    "apps/server/src/agent/tools/subAgent.ts"
-  ],
-  "继续远端 A2A 会话时原样传回": [
-    "apps/server/src/agent/tools/subAgent.ts"
-  ],
-  "工具名称 subAgent 已被内置子任务工具占用": [
-    "apps/server/src/agent/tools/subAgent.ts"
-  ],
-  "子任务与团队": [
-    "apps/server/src/agent/tools/subAgent.ts"
-  ],
-  "只有远端 A2A 团队支持 taskId/contextId": [
-    "apps/server/src/agent/tools/subAgent.ts"
   ],
   "设备互联启动失败：": [
     "apps/server/src/index.ts",
@@ -6036,22 +5947,6 @@
   "请发送文件原始内容": [
     "apps/server/src/routes/assets/save.ts",
     "apps/server/src/routes/workspaces/files/write.ts"
-  ],
-  "请提供工作目录或临时对话身份，不能同时提供": [
-    "apps/server/src/routes/browser/input.ts",
-    "apps/server/src/routes/browser/stream.ts"
-  ],
-  "浏览器操作仅在桌面客户端中可用": [
-    "apps/server/src/routes/browser/input.ts"
-  ],
-  "浏览器画面仅在桌面客户端中可用": [
-    "apps/server/src/routes/browser/stream.ts"
-  ],
-  "浏览器会话不存在或已关闭": [
-    "apps/server/src/routes/browser/stream.ts"
-  ],
-  "浏览器画面连接失败": [
-    "apps/server/src/routes/browser/stream.ts"
   ],
   "剪贴板文件“{0}”超过 100 MB": [
     "apps/server/src/routes/desktop/clipboard/read.ts"

@@ -20,6 +20,8 @@ async function scan(directory: string) {
     const path = resolve(directory, item.name);
     if (item.isDirectory()) { if (!["node_modules", "installer", "locales", "dist"].includes(item.name)) await scan(path); continue; }
     if (!/\.(ts|vue)$/.test(item.name) || /(?:\.d\.ts|providerPrompt|systemPrompt)\./i.test(item.name) || /packages[\\/]ffmpeg[\\/]src[\\/]browser\.ts$/.test(path)) continue;
+    // 工具自身的文案由工具维护，不纳入宿主字典。
+    if (/apps[\\/]server[\\/]src[\\/](?:agent[\\/](?:tools[\\/](?!index\.ts$)|bridge[\\/]question\.ts$)|routes[\\/]browser[\\/])/.test(path)) continue;
     const source = await readFile(path, "utf8");
     if (/apps[\\/]web/.test(path)) {
       for (const message of collectMessages(source, path)) add(message, path);

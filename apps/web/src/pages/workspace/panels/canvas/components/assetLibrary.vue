@@ -1,5 +1,6 @@
 <template>
-  <el-card v-if="visible" class="assetLibrary" shadow="never" :bodyStyle="{ padding: '8px' }" role="region" aria-label="素材库" @dblclick.stop>
+  <assetBrowser v-if="visible && expanded" v-model:folder="folder" v-model:searchQuery="searchQuery" v-model:newFolderName="newFolderName" :entries="entries" :loading="loading" :newFolderParent="newFolderParent" :folderSaving="folderSaving" :mediaKind="mediaKind" :assetUrl="assetUrl" @startFolder="startFolder" @saveFolder="saveFolder" @cancelFolder="cancelFolder" @preview="openPreview" @menu="openItemMenu" @drag="startAssetDrag" />
+  <el-card v-else-if="visible" class="assetLibrary" shadow="never" :bodyStyle="{ padding: '8px' }" role="region" aria-label="素材库" @dblclick.stop>
     <div class="libraryToolbar">
       <el-input v-model="searchQuery" class="searchInput" :prefixIcon="IconSearch" placeholder="搜索素材" aria-label="搜索素材" clearable @keydown.esc.stop="searchQuery = ''" />
       <el-button class="toolbarButton" text :icon="IconFolderPlus" title="新建文件夹" aria-label="新建文件夹" :disabled="newFolderParent !== undefined" @click="startFolder" />
@@ -13,9 +14,9 @@
             <el-image v-else-if="mediaKind(data) === 'image'" class="assetThumbnail" :src="assetUrl(data.path)" fit="cover" loading="lazy" draggable="false" @click.stop="openPreview(data)">
               <template #error><icon-photo :size="18" /></template>
             </el-image>
+            <mentionThumbnail v-else-if="mediaKind(data) === 'video'" class="assetThumbnail" :thumbnail="{ url: data.path, mimeType: mentionAssetType(data.path).mimeType }" globalAsset @click.stop="openPreview(data)"><icon-video :size="18" /></mentionThumbnail>
             <span v-else class="fileIcon">
               <icon-music v-if="mediaKind(data) === 'audio'" :size="18" />
-              <icon-video v-else-if="mediaKind(data) === 'video'" :size="18" />
               <icon-file v-else :size="18" />
             </span>
             <el-input v-if="data.draft" ref="folderInput" v-model="newFolderName" class="folderNameInput" size="small" aria-label="文件夹名称" :disabled="folderSaving" @click.stop @keydown.stop @keydown.enter.prevent="saveFolder" @keydown.esc.prevent="cancelFolder" @blur="saveFolder" />
@@ -44,6 +45,13 @@
     <div v-if="previewAsset?.kind === 'video'" class="assetPreview">
       <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" showIcon />
       <video v-else :key="previewAsset.url" class="previewVideo" :src="previewAsset.url" :aria-label="previewAsset.name" controls playsinline preload="metadata" @error="previewError = '视频无法播放，文件可能已损坏或当前浏览器不支持其编码。'" />
+    </div>
+  </el-dialog>
+
+  <el-dialog v-if="expanded" :modelValue="previewAsset?.kind === 'audio'" :title="previewAsset?.name" width="min(560px, calc(100vw - 32px))" alignCenter appendToBody destroyOnClose @update:modelValue="previewAsset = undefined">
+    <div v-if="previewAsset?.kind === 'audio'" class="assetPreview">
+      <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" showIcon />
+      <audio v-else :key="previewAsset.url" class="previewAudio" :src="previewAsset.url" :aria-label="previewAsset.name" controls preload="metadata" @error="previewError = '音频无法播放，文件可能已损坏或当前浏览器不支持其编码。'" />
     </div>
   </el-dialog>
 
@@ -90,18 +98,22 @@ import axios from "axios";
 import { ElMessage, ElTree, type InputInstance, type TreeNodeData } from "element-plus";
 import { IconChevronRight, IconDots, IconEye, IconFile, IconFolder, IconFolderOpen, IconFolderPlus, IconMusic, IconPhoto, IconSearch, IconVideo, IconX } from "@tabler/icons-vue";
 import type { NodeOutput } from "@toonflow/nodes-scaffold/values";
+import { mentionAssetType } from "@toonflow/server/agent/mentionSources";
+import mentionThumbnail from "@/components/agent/mentionThumbnail.vue";
 import { startAssetDrag } from "../canvasDrop";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
 import assetMenu from "./assetMenu.vue";
+import assetBrowser from "./assetBrowser.vue";
 
 type AssetEntry = { name: string; path: string; type: "file" | "directory"; children?: AssetEntry[]; draft?: boolean };
 type AssetOutput = { label: string; output: NodeOutput };
 
-const props = defineProps<{ directory?: string }>();
+const props = defineProps<{ directory?: string; expanded?: boolean }>();
 const visible = defineModel<boolean>({ default: false });
 const saveVisible = ref(false);
 const saving = ref(false);
 const entries = ref<AssetEntry[]>([]);
+const loading = ref(false);
 const folder = ref(".");
 const assetName = ref("");
 const assetNameInput = ref<InputInstance>();
@@ -191,7 +203,6 @@ async function saveFolder() {
     await createAssetFolder(parent, name);
     cancelFolder();
     await loadEntries();
-    folder.value = parent;
   } catch (error) {
     showError(error);
     await nextTick();
@@ -218,6 +229,7 @@ function directoryEntries(items: AssetEntry[]): AssetEntry[] {
 
 async function loadEntries() {
   const request = ++loadRequest;
+  loading.value = true;
   try {
     const { data } = await axios.get<{ data: { entries: AssetEntry[] } }>("/api/assets/list");
     if (request !== loadRequest) return;
@@ -226,6 +238,8 @@ async function loadEntries() {
     if (request === loadRequest) assetTree.value?.filter(searchQuery.value);
   } catch (error) {
     if (request === loadRequest) throw error;
+  } finally {
+    if (request === loadRequest) loading.value = false;
   }
 }
 
@@ -239,7 +253,7 @@ watch(visible, opened => {
     cancelFolder();
     previewAsset.value = undefined;
   }
-});
+}, { immediate: true });
 
 function selectFolder(entry: AssetEntry) {
   if (entry.draft) return;
@@ -435,6 +449,7 @@ defineExpose({ openSave });
 }
 
 .assetPreview {
+  .previewAudio { display: block; width: 100%; }
   .previewVideo {
     display: block;
     width: 100%;

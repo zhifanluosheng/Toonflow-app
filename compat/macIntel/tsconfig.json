@@ -8,5 +8,5 @@
       "electrobun/main": ["./generated/electrobun.ts"]
     }
   },
-  "include": ["../../apps/desktop/src", "build.ts", "electrobun.config.ts", "updater.ts", "sdkTypes.d.ts"]
+  "include": ["../../apps/desktop/src", "build.ts", "prepareNative.ts", "electrobun.config.ts", "updater.ts", "sdkTypes.d.ts"]
 }

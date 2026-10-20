@@ -1,5 +1,5 @@
 <template>
-  <main class="workspacePage" :style="{ '--agentWidth': `${agentVisible ? agentWidth : 0}px` }">
+  <main class="workspacePage" :inert="workspaceStore.projectLoadingVisible" :style="{ '--agentWidth': `${agentVisible ? agentWidth : 0}px` }">
     <canvasPanel
       :key="workspaceStore.project?.directory"
       v-model:selectedTool="selectedTool"
@@ -10,7 +10,7 @@
       :aria-hidden="activePanel !== 'canvas'"
       :active="activePanel === 'canvas'"
       :settingsVisible="settingsVisible" />
-    <keep-alive :max="1">
+    <keep-alive :key="workspaceStore.project?.directory" :max="1">
       <documentPanel
         v-if="activePanel === 'document'"
         :key="workspaceStore.project?.directory"
@@ -30,13 +30,13 @@
       <el-segmented :modelValue="activePanel" class="panelSwitcher" :options="panelOptions" size="small" aria-label="切换面板" @change="switchPanel">
         <template #default="{ item }">
           <span class="panelOption">
-            <component :is="item.icon" :size="14" aria-hidden="true" />
+            <component :is="item.icon" :size="15" aria-hidden="true" />
             {{ item.label }}
           </span>
         </template>
       </el-segmented>
       <div class="bottomTools">
-        <el-card v-if="activePanel === 'canvas'" class="toolMenu" shadow="never" :bodyStyle="{ padding: '3px 6px' }">
+        <el-card v-if="activePanel === 'canvas'" class="toolMenu" shadow="never" :bodyStyle="{ padding: '2px 4px' }">
           <div class="toolMenuContent" role="toolbar" aria-label="画布工具">
             <el-tooltip content="添加节点" placement="top" :showArrow="false" :hideAfter="0" :enterable="false" :triggerKeys="[]">
               <el-button class="toolButton addNodeButton" :disabled="!canvasPanelRef?.canvasReady || settingsVisible" aria-label="添加节点" aria-haspopup="menu" @click="canvasPanelRef?.addNodeAtPointer()">
@@ -52,6 +52,11 @@
                 aria-label="切换抓手/移动工具"
                 @click="selectedTool = selectedTool === 'move' ? 'hand' : 'move'">
                 <component :is="selectedTool === 'move' ? IconPointer : IconHandStop" :size="18" aria-hidden="true" />
+              </el-button>
+            </el-tooltip>
+            <el-tooltip content="搜索节点" placement="top" :showArrow="false" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+              <el-button class="toolButton" text :disabled="!canvasPanelRef?.canvasReady || settingsVisible" aria-label="搜索节点" @click="canvasPanelRef?.openNodeSearch()">
+                <icon-search :size="18" aria-hidden="true" />
               </el-button>
             </el-tooltip>
             <el-tooltip :showArrow="false" content="帮助" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]" :disabled="helpVisible">
@@ -105,7 +110,7 @@
         </el-tooltip>
       </div>
     </div>
-    <floatingAgent v-model="agentVisible" @resize="agentWidth = $event" />
+    <floatingAgent v-model="agentVisible" :inert="workspaceStore.projectLoadingVisible" @resize="agentWidth = $event" />
     <settings v-model="settingsVisible" />
     <el-dialog v-model="contactVisible" :title="contactInfo.title" width="min(360px, calc(100vw - 32px))" alignCenter appendToBody>
       <div class="contactContent">
@@ -128,7 +133,7 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onScopeDispose, provide, ref, shallowRef, watch, type ComponentPublicInstance } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import axios from "axios";
-import { IconVector, IconFileText, IconPointer, IconHandStop, IconPlus, IconHelp, IconBook, IconBug, IconBrandWechat, IconBriefcase } from "@tabler/icons-vue";
+import { IconVector, IconFileText, IconPointer, IconHandStop, IconPlus, IconSearch, IconHelp, IconBook, IconBug, IconBrandWechat, IconBriefcase } from "@tabler/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { QRCode } from "tdesign-vue-next";
 import settings from "@/components/settings/index.vue";
@@ -145,7 +150,18 @@ const documentPanel = defineAsyncComponent(() => import("./panels/document/index
 
 const activePanel = ref<"canvas" | "document">("canvas");
 const selectedTool = ref<"move" | "hand">("move");
-onMounted(() => anonymousData.track("workspace.canvas"));
+const sideButtonEvents = ["mousedown", "mouseup", "auxclick"] as const;
+// 鼠标侧键会直接触发原生历史导航，需在 DOM 事件阶段拦截，避免生成中的工作区被误关闭。
+function preventSideButtonNavigation(event: MouseEvent) {
+  if (event.button === 3 || event.button === 4) event.preventDefault();
+}
+onMounted(() => {
+  anonymousData.track("workspace.canvas");
+  for (const eventName of sideButtonEvents) window.addEventListener(eventName, preventSideButtonNavigation, true);
+});
+onScopeDispose(() => {
+  for (const eventName of sideButtonEvents) window.removeEventListener(eventName, preventSideButtonNavigation, true);
+});
 const workspaceStore = useWorkspaceStore();
 useProviderBalances();
 const panelOptions = [
@@ -178,9 +194,16 @@ function showContact(type: "community" | "business") {
   contactVisible.value = true;
 }
 const canvasPanelRef = ref<InstanceType<typeof canvasPanel>>();
+watch(() => canvasPanelRef.value?.canvasListReady, ready => {
+  workspaceStore.projectLoading = !ready;
+}, { immediate: true });
+onScopeDispose(() => { workspaceStore.projectLoading = false; });
 const documentPanelCache = shallowRef<{ directory: string; instance: InstanceType<typeof documentPanel> }>();
 const documentPanelRef = computed(() => documentPanelCache.value?.directory === workspaceStore.project?.directory ? documentPanelCache.value?.instance : undefined);
-watch(() => workspaceStore.project?.directory, () => { documentPanelCache.value = undefined; }, { flush: "sync" });
+watch(() => workspaceStore.project?.directory, () => {
+  documentPanelCache.value?.instance.cancelSave();
+  documentPanelCache.value = undefined;
+}, { flush: "sync" });
 function setDocumentPanel(value: Element | ComponentPublicInstance | null) {
   const directory = workspaceStore.project?.directory;
   // KeepAlive 失活会清空模板 ref，保留同一工作区实例以协调后台文档保存和文件操作。
@@ -193,7 +216,11 @@ provide("performWorkspaceFileAction", (directory: string, action: "copy" | "rena
   documentPanelRef.value ? documentPanelRef.value.performFileAction(directory, action, path, target, entryType) : performFileAction(directory, action, path, target));
 
 const controlLifetime = new AbortController();
-onScopeDispose(() => controlLifetime.abort(new Error("工作区已关闭")));
+onScopeDispose(() => {
+  controlLifetime.abort(new Error("工作区已关闭"));
+  // 离开守卫已完成保存，先释放文档观察者，避免画布卸载被当成节点删除。
+  documentPanelRef.value?.cancelSave();
+});
 registerWorkspaceControl({
   getState: () => ({
     directory: workspaceStore.project?.directory ?? null,
@@ -215,12 +242,13 @@ registerWorkspaceControl({
     if (request.name === "switchPanel") {
       if (request.args.panel !== "canvas" && request.args.panel !== "document") throw new Error("未知面板");
       if (!(await switchPanel(request.args.panel))) throw new Error("面板切换失败，请检查文档是否保存成功");
+      if (request.args.panel === "document") await waitForControlValue(() => documentPanelRef.value?.ready ? documentPanelRef.value : undefined, callSignal);
       checkDirectory();
       return { panel: activePanel.value };
     }
     if (["getDocument", "openDocument", "writeDocument"].includes(request.name)) {
       if (!(await switchPanel("document"))) throw new Error("文档面板无法打开");
-      const panel = await waitForControlValue(() => documentPanelRef.value, callSignal);
+      const panel = await waitForControlValue(() => documentPanelRef.value?.ready ? documentPanelRef.value : undefined, callSignal);
       checkDirectory();
       if (request.name === "openDocument") await panel.openDocument(request.args, callSignal);
       if (request.name === "writeDocument") await panel.writeDocument(request.args, callSignal);
@@ -343,6 +371,18 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
   height: 100dvh;
   background-color: var(--el-bg-color);
 
+  :deep(.workspaceMenu > .el-card),
+  :deep(.canvasMenu),
+  :deep(.balanceCard),
+  :deep(.canvasControlsCard),
+  .panelSwitcher,
+  .toolMenu {
+    background: color-mix(in srgb, var(--el-bg-color-overlay) 70%, transparent);
+    backdrop-filter: blur(6px);
+    border-color: var(--el-border-color-light);
+    box-shadow: var(--el-box-shadow-light);
+  }
+
   .canvasPanel {
     position: absolute;
     inset: 0;
@@ -371,18 +411,18 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
     pointer-events: none;
 
     .panelSwitcher {
-      --el-border-radius-base: 999px;
-      --el-segmented-bg-color: var(--el-bg-color-overlay);
-      --el-segmented-item-selected-color: var(--el-color-primary);
-      --el-segmented-item-selected-bg-color: var(--el-color-primary-light-9);
+      --el-border-radius-base: var(--ui-radius-large);
+      --el-segmented-color: var(--el-text-color-secondary);
+      --el-segmented-item-selected-color: var(--el-color-white);
+      --el-segmented-item-selected-bg-color: var(--el-color-primary);
+      --el-segmented-item-hover-bg-color: color-mix(in srgb, var(--el-color-primary) 10%, transparent);
       position: absolute;
       top: 15px;
       left: 50%;
       z-index: 5;
-      min-height: 32px;
-      padding: 3px;
+      min-height: 28px;
+      padding: 2px;
       border: 1px solid var(--el-border-color-light);
-      box-shadow: var(--el-box-shadow-lighter);
       font-size: 12px;
       transform: translateX(-50%);
       pointer-events: auto;
@@ -391,9 +431,10 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 5px;
-        padding: 0 3px;
-        line-height: 24px;
+        gap: 4px;
+        padding: 0 2px;
+        line-height: 22px;
+        font-weight: 500;
       }
     }
 
@@ -418,13 +459,13 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
           gap: 2px;
 
           .toolButton {
-            width: 32px;
-            height: 32px;
+            width: 28px;
+            height: 28px;
             margin: 0;
             padding: 0;
 
             &.addNodeButton {
-              margin-right: 8px;
+              margin-right: 6px;
               color: var(--el-bg-color);
               background: var(--el-text-color-primary);
               border-color: transparent;
@@ -443,8 +484,8 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
       .agentButton {
         position: absolute;
         left: calc(100% + 8px);
-        width: 40px;
-        height: 40px;
+        width: 34px;
+        height: 34px;
         flex-shrink: 0;
         margin: 0;
         padding: 0;

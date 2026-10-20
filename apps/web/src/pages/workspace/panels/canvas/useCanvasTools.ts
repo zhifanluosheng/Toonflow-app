@@ -2,6 +2,10 @@ import { nextTick, watch, type Ref } from "vue";
 import { useVueFlow, type XYPosition } from "@vue-flow/core";
 import { useNodeEvent, useNodeToolsContext, validateConnection } from "@toonflow/nodes-scaffold/runtime";
 import { canvasSchemas, type CanvasContext, type CanvasToolCall } from "@toonflow/tool-canvas/runtime";
+import { asrRequestSchema } from "@toonflow/tools-scaffold/runtime";
+import { isBrowserAudioAsrSupported, transcribeBrowserAudio } from "@toonflow/asr";
+import useWorkspaceFiles from "@/lib/workspaceFiles";
+import { useWorkspaceStore } from "@/stores/workspace";
 import { arrangeCanvas } from "./arrangeCanvas";
 import { canvasEdgeSummary, canvasNodeSummary, createCanvasQueries, isCanvasRead } from "./canvasQueries";
 
@@ -19,6 +23,7 @@ export function useCanvasTools(options: {
   resolveCanvasContext?(id: string): CanvasContext | undefined;
 }) {
   const flow = useVueFlow();
+  const workspaceStore = useWorkspaceStore();
   const getNodeTools = useNodeToolsContext();
   let nodeRevision = 0;
   let edgeRevision = 0;
@@ -72,7 +77,8 @@ export function useCanvasTools(options: {
         canvasSignal.throwIfAborted();
         id = options.getCanvasBinding().id;
         const changesCanvas = request.name === "addCanvas" || request.name === "switchCanvas" || request.name === "renameCanvas";
-        const callSignal = AbortSignal.any([workspaceSignal, ...(changesCanvas ? [] : [canvasSignal]), AbortSignal.timeout(120000), ...(signal ? [signal] : [])]);
+        // ACT: 转写按音频时长运行，复用 ASR 的停滞与收尾超时，不套用画布操作的总时限。
+        const callSignal = AbortSignal.any([workspaceSignal, ...(changesCanvas ? [] : [canvasSignal]), ...(request.name === "transcribeAudio" ? [] : [AbortSignal.timeout(120000)]), ...(signal ? [signal] : [])]);
         callSignal.throwIfAborted();
         let cancel = () => {};
         try {
@@ -94,7 +100,7 @@ export function useCanvasTools(options: {
                 canvasSignal = binding.signal;
                 result = await execute({ name: "getCanvas", args: {} }, callSignal, id);
               }
-              if (!isCanvasRead(request.name) && request.name !== "selectNodes") await options.flushSave();
+              if (!isCanvasRead(request.name) && request.name !== "selectNodes" && request.name !== "transcribeAudio") await options.flushSave();
               callSignal.throwIfAborted();
               canvasSignal.throwIfAborted();
               return result;
@@ -120,6 +126,21 @@ export function useCanvasTools(options: {
       return readCanvas(request, canvasId, signal);
     }
     switch (request.name) {
+      case "transcribeAudio": {
+        const { path, lang } = asrRequestSchema.parse(request.args);
+        if (!isBrowserAudioAsrSupported()) throw new Error("当前浏览器或 WebView 不支持音频文件语音识别");
+        const directory = workspaceStore.project?.directory;
+        if (!directory) throw new Error("请先选择工作目录");
+        const content = await useWorkspaceFiles(directory).read(path);
+        signal.throwIfAborted();
+        if (!content.byteLength || content.byteLength > 100 * 1024 * 1024) throw new Error("音频不能为空且不能超过 100 MB");
+        const url = URL.createObjectURL(new Blob([content]));
+        try {
+          return await transcribeBrowserAudio(url, { lang, signal });
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
       case "addCanvas": {
         const { name } = canvasSchemas.addCanvas.parse(request.args);
         return options.menu().addCanvas(name, signal);

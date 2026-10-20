@@ -3,16 +3,19 @@ import { z } from "zod";
 import { validateFields } from "@/lib/middleware";
 import { translateError } from "@/lib/i18n";
 import u from "@/utils";
+import { thinkingLevels } from "@/lib/modelReasoning";
+import { getAgentModelConfiguration } from "@/agent/runtime/model";
 
 const inputSchema = z.strictObject({
   sessionId: z.uuid(), runId: z.uuid(), prompt: z.string().trim().min(1).max(100000),
   providerId: z.string().min(1).max(200), modelId: z.string().min(1).max(500),
-  thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+  thinkingLevel: z.enum(thinkingLevels).optional(),
 });
 
 export default Router().post("/", validateFields(inputSchema.shape), async (req, res) => {
   u.mcpControl.assertAppRequest(req);
   const input = inputSchema.parse(req.body);
+  getAgentModelConfiguration(input.providerId, input.modelId, input.thinkingLevel);
   const controller = new AbortController();
   const abort = () => controller.abort();
   res.once("close", abort);

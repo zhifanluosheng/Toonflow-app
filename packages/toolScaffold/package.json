@@ -12,6 +12,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@toonflow/asr": "workspace:*",
     "@toonflow/file": "workspace:*",
     "@toonflow/ffmpeg": "workspace:*",
     "@toonflow/providers": "workspace:*",

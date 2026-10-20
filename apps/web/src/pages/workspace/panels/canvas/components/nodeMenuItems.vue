@@ -21,7 +21,8 @@
           placement="right-start"
           :fallbackPlacements="['left-start', 'right-end', 'left-end']"
           :width="220"
-          :offset="0"
+          :offset="8"
+          popperClass="nodeChildMenu"
           :showArrow="false"
           :showAfter="0"
           :hideAfter="150"
@@ -236,5 +237,23 @@ defineExpose({ focusFirst, hasKeyboardFocus });
   margin: 0;
   padding: 0;
   list-style: none;
+  overflow: hidden;
+  border-radius: max(0px, calc(var(--el-popover-border-radius) - 1px));
+}
+
+:global(.nodeChildMenu::before) {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+}
+
+:global(.nodeChildMenu[data-popper-placement^="right"]::before) {
+  right: 100%;
+}
+
+:global(.nodeChildMenu[data-popper-placement^="left"]::before) {
+  left: 100%;
 }
 </style>

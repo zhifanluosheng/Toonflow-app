@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./client": "./src/client.ts",
     "./skill": {
       "types": "./src/skill.d.ts",
       "default": "./skills/toonflow/SKILL.md"

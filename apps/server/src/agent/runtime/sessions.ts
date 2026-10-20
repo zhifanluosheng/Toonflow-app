@@ -9,6 +9,7 @@ import conf from "@/utils/conf";
 import { providerSchema, getModelLimits } from "@/utils/ai";
 import { lockWorkspaceFiles, resolveWorkspacePath, writeWorkspaceFile } from "@/utils/workspace/files";
 import { getReadableFileMimeType } from "@/lib/documentFormats";
+import { thinkingLevels } from "@/lib/modelReasoning";
 
 export const agentAttachmentsSchema = z
   .array(
@@ -218,6 +219,7 @@ export async function createAgentConversation(cwd: string, child?: Omit<AgentSub
   const { path: directory } = await resolveWorkspacePath(cwd, ".agent/sessions", true);
   const history = SessionManager.create(cwd, directory, child ? { parentSession: child.parentFile } : undefined);
   const path = history.getSessionFile()!;
+  history.appendCustomEntry("toonflowReasoning", { thinkingLevel: child?.thinkingLevel ?? null });
   if (child) {
     history.appendSessionInfo(child.name);
     history.appendCustomEntry("toonflowSubAgentInfo", { ...child, file: basename(path), status: "running" });
@@ -271,6 +273,8 @@ export async function getAgentSession(cwd: string, path: string) {
     .map((entry, index) => [(entry as SessionEntry).id, index + 1]) : []);
   const history = SessionManager.inMemory(cwd, undefined, entries);
   const branch = history.getBranch();
+  const reasoning = branch.findLast(entry => entry.type === "custom" && entry.customType === "toonflowReasoning");
+  const reasoningSelection = z.object({ thinkingLevel: z.enum(thinkingLevels).nullable() }).safeParse(reasoning?.type === "custom" ? reasoning.data : undefined);
   const attachmentMessages = new Map(
     branch.flatMap((entry) => {
       if (entry.type !== "custom" || !["toonflowAttachments", "toonflowUserMessage"].includes(entry.customType)) return [];
@@ -390,10 +394,10 @@ export async function getAgentSession(cwd: string, path: string) {
     name: history.getSessionName() || (firstUserMessage?.content.trim() || firstUserMessage?.attachments?.[0]?.name)?.slice(0, 60) || "新对话",
     messages,
     stats: getAgentStats(history),
-    contextUsage: configuredModel && model ? getAgentContext(history, getModelLimits(model.provider, configuredModel).contextWindow) : undefined,
+    contextUsage: getAgentContext(history, active?.session?.model?.contextWindow ?? (configuredModel && model ? getModelLimits(model.provider, configuredModel).contextWindow : 0)),
     providerId: model?.provider,
     modelId: model?.modelId,
-    thinkingLevel: context.thinkingLevel,
+    thinkingLevel: reasoningSelection.success ? reasoningSelection.data.thinkingLevel ?? undefined : context.thinkingLevel,
     parentFile: getParentSessionFile(history),
     subAgents: [...subAgents.values()],
     running: Boolean(active),
@@ -404,10 +408,10 @@ export function getToolResultText(content: { type: string; text?: string }[]) {
   return content.map((part) => (part.type === "text" ? part.text : `[${part.type}]`)).join("\n");
 }
 
-export function getAgentStats(history: SessionManager) {
+export function getAgentStats(history: SessionManager, timing?: { outputTokens: number; decodeMs: number }) {
   const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-  let outputTokens = 0;
-  let decodeMs = 0;
+  let outputTokens = timing?.outputTokens ?? 0;
+  let decodeMs = timing?.decodeMs ?? 0;
   for (const entry of history.getBranch()) {
     const usage =
       entry.type === "compaction" || entry.type === "branch_summary"
@@ -440,7 +444,8 @@ export function getAgentStats(history: SessionManager) {
   return { tokens, tokensPerSecond: decodeMs > 0 ? (outputTokens * 1000) / decodeMs : undefined };
 }
 
-function getAgentContext(history: SessionManager, contextWindow: number) {
+export function getAgentContext(history: SessionManager, contextWindow = 0) {
+  if (contextWindow <= 0) return undefined;
   const branch = history.getBranch();
   const compactionIndex = branch.findLastIndex((entry) => entry.type === "compaction");
   const recent = branch.slice(compactionIndex + 1);
@@ -453,11 +458,10 @@ function getAgentContext(history: SessionManager, contextWindow: number) {
       (entry.customType === "toonflowDeletedUser" || entry.customType === "toonflowDeletedEntry") &&
       Date.parse(entry.timestamp) >= (messages[usageIndex]?.timestamp ?? 0)
   );
+  // ACT: 压缩后先按摘要与保留消息估算，首条新回复后再使用模型 usage。
   const tokens =
     usage && usageIndex >= 0 && !deletedAfterReply
       ? calculateContextTokens(usage) + messages.slice(usageIndex + 1).reduce((total, message) => total + estimateTokens(message), 0)
-      : compactionIndex >= 0 && !deletedAfterReply
-      ? null
       : messages.reduce((total, message) => total + estimateTokens(message), 0);
-  return { tokens, contextWindow, percent: tokens === null ? null : (tokens / contextWindow) * 100 };
+  return { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
 }

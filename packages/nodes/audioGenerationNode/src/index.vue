@@ -10,6 +10,8 @@
     :fullscreenVisible="false"
     style="width: 360px">
     <template #topActions>
+      <el-button :icon="IconTextRecognition" :loading="transcribing" :disabled="busy || !outputFile" text title="音频转文本" aria-label="音频转文本" @click.stop="transcribe">转文本</el-button>
+      <el-button v-if="transcribing" :icon="IconPlayerStop" text title="取消转文本" aria-label="取消转文本" @click.stop="cancelTranscription">取消</el-button>
       <el-button :icon="IconScissors" :disabled="busy || !previewUrl" text title="截取音频" aria-label="截取音频" @click.stop="actions?.open('clip')">截取</el-button>
       <el-button :icon="IconGauge" :disabled="busy || !previewUrl" text title="音频变速" aria-label="音频变速" @click.stop="actions?.open('speed')">变速</el-button>
       <el-button :icon="IconTransfer" :loading="uploading" :disabled="busy" text title="替换音频" aria-label="替换音频" @click.stop="fileInput?.click()">替换音频</el-button>
@@ -47,7 +49,7 @@
             <el-button
               class="sendButton"
               :icon="generating ? IconPlayerStop : IconArrowUp"
-              :disabled="deleting || uploading || actions?.processing || (!generating && (!generationPrompt || !selectedModel))"
+              :disabled="deleting || uploading || transcribing || actions?.processing || (!generating && (!generationPrompt || !selectedModel))"
               :title="generating ? '停止生成' : '生成音频'"
               :aria-label="generating ? '停止生成' : '生成音频'"
               @click="generating ? generationController?.abort() : startGeneration().catch(error => showNodeError(error, '音频生成失败'))" />
@@ -56,17 +58,18 @@
       </el-card>
     </template>
   </nodeSkeleton>
-  <audioActions ref="actions" :file="outputFile" :src="previewUrl" :target="speedTarget" :disabled="generating || deleting || uploading" @pause="player?.pause()" />
+  <audioActions ref="actions" :file="outputFile" :src="previewUrl" :target="speedTarget" :disabled="generating || deleting || uploading || transcribing" @pause="player?.pause()" />
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onScopeDispose, ref, watch } from "vue";
 import { ElButton, ElCard, ElLoading, ElOption, ElOptionGroup, ElSelect } from "element-plus";
-import { IconArrowUp, IconGauge, IconMusicBolt, IconPlayerStop, IconScissors, IconTransfer } from "@tabler/icons-vue";
+import { IconArrowUp, IconGauge, IconMusicBolt, IconPlayerStop, IconScissors, IconTransfer, IconTextRecognition } from "@tabler/icons-vue";
 import { getTargetValues, isTypeCompatible, nodeSkeleton, nodeTools, useNode, z, type NodeAudioRequest, type NodeHandle, type NodeInputValue, type NodeMediaModel } from "@toonflow/nodes-scaffold/runtime";
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
+import { useAudioTranscription } from "@toonflow/node-shared/useAudioTranscription";
 import { useNodeReferences } from "@toonflow/node-shared/useNodeReferences";
 import audioPlayer from "@toonflow/node-audio/audioPlayer";
 import audioActions from "@toonflow/node-audio/audioActions";
@@ -103,6 +106,8 @@ const fileInput = ref<HTMLInputElement>();
 const player = ref<InstanceType<typeof audioPlayer>>();
 const actions = ref<InstanceType<typeof audioActions>>();
 const speedTarget = ref<HTMLElement>();
+const outputFile = computed(() => outputs.value.audio?.dataType === "AUDIO" ? outputs.value.audio.value : undefined);
+const { processing: transcribing, transcribe, cancel: cancelTranscription, cancelAndWait: cancelTranscriptionAndWait } = useAudioTranscription(outputFile);
 let disposed = false;
 let generationController: AbortController | undefined;
 let generation: Promise<void> | undefined;
@@ -110,7 +115,7 @@ let modelsRequest: Promise<void> | undefined;
 let modelsRefreshPending = false;
 const generationState = useNodeGeneration(outputs, () => generationController?.abort());
 const { generating } = generationState;
-const busy = computed(() => generating.value || uploading.value || deleting.value || !!actions.value?.processing);
+const busy = computed(() => generating.value || uploading.value || deleting.value || transcribing.value || !!actions.value?.processing);
 watch(busy, value => { if (!value && modelsRefreshPending) void refreshProviderModels(); });
 const selectedModel = computed(() => models.value.find(item => JSON.stringify([item.providerId, item.modelId]) === data.value.model));
 const modelGroups = computed(() => groupNodeModels(models.value));
@@ -131,7 +136,6 @@ const generationInput = computed<Omit<NodeAudioRequest, "directory"> | undefined
     audios: refList.value.flatMap(item => item.dataType === "AUDIO" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []),
   };
 });
-const outputFile = computed(() => outputs.value.audio?.dataType === "AUDIO" ? outputs.value.audio.value : undefined);
 const previewUrl = files.useFileUrl(outputFile, error => showNodeError(error, "音频读取失败"));
 
 function referencesAllowed(values: NodeInputValue[]) {
@@ -249,7 +253,7 @@ nodeEvent.on("delete", async () => {
   deleting.value = true;
   generationController?.abort();
   try {
-    await Promise.all([generation, actions.value?.cancelAndWait()]);
+    await Promise.all([generation, actions.value?.cancelAndWait(), cancelTranscriptionAndWait()]);
     await files.removeNodeFiles();
   } finally {
     deleting.value = false;

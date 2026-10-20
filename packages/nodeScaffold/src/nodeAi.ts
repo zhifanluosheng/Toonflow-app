@@ -89,6 +89,109 @@ const mediaPriceCache = mediaPriceCacheHost[mediaPriceCacheKey] ??= (() => {
   return cache;
 })();
 
+type MediaTaskResult = { code: number; data: (NodeImageResult | NodeVideoResult | NodeAudioResult)[] | null; message: string };
+type PendingMediaTask = { directory: string; failedAt?: number; finish: (result: MediaTaskResult) => void; fail: (error: unknown) => void };
+const mediaTasksKey = Symbol.for("toonflow.nodeMediaTasks");
+const mediaTasksHost = globalThis as typeof globalThis & { [mediaTasksKey]?: ReturnType<typeof createMediaTasks> };
+// ACT: 图片、视频等独立 UMD 共用短轮询；每批最多 100 项，不按节点占用长连接。
+const mediaTasks = mediaTasksHost[mediaTasksKey] ??= createMediaTasks();
+
+function createMediaTasks() {
+  const pending = new Map<string, PendingMediaTask>();
+  const cancellations = new Map<string, Set<string>>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let polling = false;
+
+  function schedule(delay = 1000) {
+    if (polling || timer !== undefined || (!pending.size && !cancellations.size)) return;
+    timer = setTimeout(poll, delay);
+  }
+
+  function cancel(directory: string, taskId: string) {
+    const ids = cancellations.get(directory) ?? new Set<string>();
+    ids.add(taskId);
+    cancellations.set(directory, ids);
+    schedule(0);
+  }
+
+  async function poll() {
+    timer = undefined;
+    polling = true;
+    try {
+      for (const [directory, ids] of cancellations) {
+        cancellations.delete(directory);
+        const taskIds = [...ids];
+        for (let offset = 0; offset < taskIds.length; offset += 100) {
+          // 取消失败由服务端无心跳过期兜底，不重新提交生成请求。
+          await fetch("/api/ai/media/tasks/cancel", {
+            method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" },
+            body: JSON.stringify({ directory, taskIds: taskIds.slice(offset, offset + 100) }), signal: AbortSignal.timeout(10000),
+          }).then(readResult).catch(() => {});
+        }
+      }
+      const directories = new Set([...pending.values()].map(task => task.directory));
+      for (const directory of directories) {
+        const taskIds = [...pending].filter(([, task]) => task.directory === directory).map(([id]) => id);
+        for (let offset = 0; offset < taskIds.length; offset += 100) {
+          const batch = taskIds.slice(offset, offset + 100).filter(id => pending.has(id));
+          if (!batch.length) continue;
+          try {
+            const results = await fetch("/api/ai/media/tasks/status", {
+              method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" },
+              body: JSON.stringify({ directory, taskIds: batch }), signal: AbortSignal.timeout(10000),
+            }).then(readResult<{ taskId: string; result?: MediaTaskResult }[]>);
+            const byId = new Map(results.map(result => [result.taskId, result]));
+            for (const id of batch) {
+              const task = pending.get(id);
+              if (!task) continue;
+              const item = byId.get(id);
+              if (!item) throw new Error("生成任务响应不完整，请重试");
+              task.failedAt = undefined;
+              if (item.result) task.finish(item.result);
+            }
+          } catch (error) {
+            for (const id of batch) {
+              const task = pending.get(id);
+              if (!task) continue;
+              // ACT: 状态查询允许 90 秒临时断线，不因几次快速失败取消已经提交的生成。
+              task.failedAt ??= Date.now();
+              if (task.failedAt + 90000 <= Date.now()) { task.fail(error); cancel(directory, id); }
+            }
+          }
+        }
+      }
+    } finally {
+      polling = false;
+      schedule();
+    }
+  }
+
+  function wait(directory: string, taskId: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    return new Promise<NonNullable<MediaTaskResult["data"]>>((resolve, reject) => {
+      const cleanup = () => {
+        pending.delete(taskId);
+        signal.removeEventListener("abort", abort);
+        if (!pending.size && !cancellations.size) { clearTimeout(timer); timer = undefined; }
+      };
+      const abort = () => { cleanup(); cancel(directory, taskId); reject(signal.reason); };
+      pending.set(taskId, {
+        directory,
+        finish(result) {
+          cleanup();
+          if (result.code === 200 && result.data) resolve(result.data);
+          else reject(new Error(result.message || "媒体生成失败"));
+        },
+        fail(error) { cleanup(); reject(error); },
+      });
+      signal.addEventListener("abort", abort, { once: true });
+      schedule();
+    });
+  }
+
+  return { wait, cancel };
+}
+
 export function invalidateNodeModels(type: "language" | "media") {
   modelCache.delete(type === "language" ? "/api/ai/models" : "/api/ai/media/models");
   if (type === "media") mediaPriceCache.prices.clear();
@@ -248,12 +351,30 @@ export function useNodeAi() {
   }
 
   async function generateMedia<T extends "image" | "video" | "audio">(mediaType: T, input: NodeImageRequest | NodeVideoRequest | NodeAudioRequest, signal?: AbortSignal) {
-    return readResult<{ path: string; mimeType: string; mediaType: T }[]>(await fetch("/api/ai/media/generate", {
+    const waitingSignal = requestSignal(signal);
+    waitingSignal.throwIfAborted();
+    const taskId = crypto.randomUUID();
+    // 提交使用独立超时；用户取消立即结束等待，提交收尾后再取消，避免先取消后登记的竞态。
+    const submitted = fetch("/api/ai/media/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" },
-      body: JSON.stringify({ ...input, mediaType }),
-      signal: requestSignal(signal),
-    }));
+      body: JSON.stringify({ ...input, mediaType, taskId }), signal: AbortSignal.timeout(30000),
+    }).then(readResult<{ taskId: string }>);
+    let abort = () => {};
+    try {
+      const started = await Promise.race([submitted, new Promise<never>((_resolve, reject) => {
+        abort = () => reject(waitingSignal.reason);
+        waitingSignal.addEventListener("abort", abort, { once: true });
+      })]);
+      waitingSignal.throwIfAborted();
+      if (started.taskId !== taskId) throw new Error("生成任务响应无效，请确认服务端已更新");
+    } catch (error) {
+      void submitted.then(() => mediaTasks.cancel(input.directory, taskId), () => mediaTasks.cancel(input.directory, taskId));
+      throw error;
+    } finally {
+      waitingSignal.removeEventListener("abort", abort);
+    }
+    return await mediaTasks.wait(input.directory, taskId, waitingSignal) as { path: string; mimeType: string; mediaType: T }[];
   }
 
   function generateImage(input: NodeImageRequest, signal?: AbortSignal) {

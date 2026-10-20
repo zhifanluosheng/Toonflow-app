@@ -1,14 +1,15 @@
 import { loadSkillsFromDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { readFile } from "@toonflow/file";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { Router } from "express";
 import { success } from "@/lib/responseFormat";
 import u from "@/utils";
 
 const router = Router();
 
-export default router.get("/", async (_req, res) => {
-  const { skills } = loadSkillsFromDir({ dir: resolve(dirname(u.conf.path), "skills"), source: "user" });
+export default router.get("/", async (req, res) => {
+  const skillsDirectory = resolve(dirname(u.conf.path), "skills");
+  const { skills } = loadSkillsFromDir({ dir: skillsDirectory, source: "user" });
   const items = await Promise.all(skills.map(async (skill) => {
     const { frontmatter } = parseFrontmatter(await readFile(skill.filePath, "utf8"));
     const metadata = frontmatter.metadata && typeof frontmatter.metadata === "object" && !Array.isArray(frontmatter.metadata)
@@ -20,6 +21,7 @@ export default router.get("/", async (_req, res) => {
     }
     return {
       name: skill.name,
+      builtin: req.app.locals.builtinPlugins.skill.has(relative(skillsDirectory, skill.filePath).split(sep)[0]),
       version: typeof metadata.version === "string" ? metadata.version.trim() : "",
       displayName: typeof metadata.displayName === "string" && metadata.displayName.trim() ? metadata.displayName : skill.name,
       description: skill.description,

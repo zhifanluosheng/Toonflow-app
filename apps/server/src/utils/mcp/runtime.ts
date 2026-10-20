@@ -7,6 +7,7 @@ import type { Socket } from "node:net";
 import type { Express } from "express";
 import conf from "@/utils/conf";
 import { getMcpSettings } from "@/utils/mcp/control";
+import { closeMcpServers } from "@/utils/mcp/servers";
 
 let runtime: { app: Express; appOrigin: string; requestHeaders: Record<string, string>; server?: Server; sockets?: Set<Socket>; url?: string; port?: number; preferredPort?: number; file?: string; command: string; entry: string; error?: string } | undefined;
 let reloadQueue = Promise.resolve();
@@ -43,6 +44,7 @@ export function stopMcpRuntime() {
     const current = runtime;
     runtime = undefined;
     removeRuntime(current?.file);
+    await closeMcpServers();
     if (!current?.server) return;
     await new Promise<void>(resolve => {
       current.server!.close(() => resolve());

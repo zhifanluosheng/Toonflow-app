@@ -78,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useNode, useVueFlow, type Node } from "@vue-flow/core";
 import { ElButton, ElDialog, ElMessage, ElProgress } from "element-plus";
 import { useNodeFiles, useNodeFfmpeg, useNodeEvent, type WorkspaceFiles, type NodeMediaValue } from "@toonflow/nodes-scaffold/runtime";
@@ -87,7 +87,7 @@ import { processVideo } from "../videoProcessing";
 
 const props = defineProps<{ file?: NodeMediaValue; src: string; disabled?: boolean }>();
 const { node } = useNode();
-const { addNodes, findNode, getNodes, nodeTypes } = useVueFlow();
+const { addNodes, addEdges, removeNodes, findNode, getNodes, nodeTypes, removeSelectedElements, addSelectedNodes, nodesSelectionActive, fitView, setCenter } = useVueFlow();
 const files = useNodeFiles();
 const loadFfmpeg = useNodeFfmpeg();
 const nodeEvent = useNodeEvent();
@@ -97,6 +97,7 @@ const actionLabels = { extractAudio: "提取音轨", separate: "分离音视频"
 const action = ref<keyof typeof actionLabels>("trim");
 const visible = ref(false);
 const processing = ref(false);
+const creatingAnalysis = ref(false);
 const cancelling = ref(false);
 const preview = ref<HTMLVideoElement>();
 const duration = ref(0);
@@ -143,7 +144,7 @@ nodeEvent.on("save", reason => {
 nodeEvent.on("delete", async () => { cancel(); await job; });
 
 function open(value: keyof typeof actionLabels) {
-  if (processing.value || props.disabled || !props.file) return;
+  if (processing.value || creatingAnalysis.value || props.disabled || !props.file) return;
   action.value = value;
   duration.value = start.value = end.value = 0;
   currentTime.value = 0;
@@ -152,7 +153,57 @@ function open(value: keyof typeof actionLabels) {
   if (value !== "trim") run();
 }
 
-defineExpose({ open, processing });
+async function createFrameAnalysis() {
+  if (processing.value || creatingAnalysis.value || props.disabled || !props.file) return;
+  const type = "remote-frameAnalysisNode";
+  const canvasId = getCanvas?.()?.id;
+  const source = props.file.url;
+  const nodeId = crypto.randomUUID();
+  creatingAnalysis.value = true;
+  try {
+    if (!nodeTypes?.value?.[type]) throw new Error("请先启用逐帧拉片节点插件");
+    if (findNode(node.id) !== node) throw new Error("原视频节点已变化，请重新操作");
+    const width = Math.max(240, node.dimensions.width || 320);
+    const x = node.computedPosition.x + (node.dimensions.width || 320) + 80;
+    let y = node.computedPosition.y;
+    for (const other of [...getNodes.value].sort((left, right) => left.computedPosition.y - right.computedPosition.y)) {
+      const position = other.computedPosition;
+      if (position.x < x + width && position.x + (other.dimensions.width || 320) > x
+        && position.y < y + 320 && position.y + (other.dimensions.height || 300) > y) {
+        y = position.y + (other.dimensions.height || 300) + 40;
+      }
+    }
+    await batchHistory(async () => {
+      try {
+        // 组内视频使用绝对坐标，新拉片节点直接放到画布，不继承父组的相对位置。
+        addNodes({ id: nodeId, type, position: { x, y }, data: { label: `${node.data.label || "视频"} · 逐帧拉片` } });
+        await nextTick();
+        if (getCanvas?.()?.id !== canvasId || findNode(node.id) !== node || props.file?.url !== source
+          || !nodeTypes?.value?.[type] || !findNode(nodeId)) throw new Error("画布或视频已变化，请重新操作");
+        addEdges({ id: crypto.randomUUID(), source: node.id, sourceHandle: "video", target: nodeId, targetHandle: "in" });
+      } catch (error) {
+        removeNodes(nodeId, true, false);
+        throw error;
+      }
+    });
+    const created = findNode(nodeId);
+    if (!created || getCanvas?.()?.id !== canvasId) return;
+    removeSelectedElements();
+    addSelectedNodes([created]);
+    nodesSelectionActive.value = false;
+    await nextTick();
+    if (findNode(nodeId) !== created || getCanvas?.()?.id !== canvasId) return;
+    if (!await fitView({ nodes: [nodeId], padding: 0.4, maxZoom: 1, duration: 200 })) {
+      await setCenter(x + width / 2, y + 160, { zoom: 1, duration: 200 });
+    }
+  } catch (error) {
+    showNodeError(error, "创建逐帧拉片节点失败");
+  } finally {
+    creatingAnalysis.value = false;
+  }
+}
+
+defineExpose({ open, processing, createFrameAnalysis, creatingAnalysis });
 
 function readDuration(event: Event) {
   const value = (event.currentTarget as HTMLVideoElement).duration;

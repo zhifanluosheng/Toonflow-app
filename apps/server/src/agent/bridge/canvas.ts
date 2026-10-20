@@ -1,5 +1,6 @@
 import { canvasOperations } from "@toonflow/tool-canvas/runtime";
 import type { CanvasInfo, CanvasContext } from "@toonflow/tools-scaffold/runtime";
+import { asrRequestSchema } from "@toonflow/tools-scaffold/runtime";
 import type { AgentEvent } from "@/agent/runtime/types";
 
 type CanvasResult = { result?: unknown; error?: string };
@@ -19,9 +20,9 @@ export function createCanvasContext(cwd: string, canvas: CanvasInfo, send: (even
       const pending = queue.then(() => {
         if (disposed) throw new Error("画布调用所属对话已结束");
         signal?.throwIfAborted();
-        const operation = canvasOperations.find(item => item.name === request.name);
-        if (!operation) throw new Error("画布操作不存在");
-        const args = operation.parameters.parse(request.args);
+        const schema = request.name === "transcribeAudio" ? asrRequestSchema : canvasOperations.find(item => item.name === request.name)?.parameters;
+        if (!schema) throw new Error("画布操作不存在");
+        const args = schema.parse(request.args);
         const callId = crypto.randomUUID();
         return new Promise((resolve, reject) => {
           const finish = ({ result, error }: CanvasResult) => {
@@ -33,11 +34,12 @@ export function createCanvasContext(cwd: string, canvas: CanvasInfo, send: (even
             else resolve(result);
           };
           const abort = () => finish({ error: "画布调用已取消" });
-          const timer = setTimeout(() => finish({ error: "画布调用超时，请确认画布仍然打开" }), 120000);
+          // ACT: 音频按实际时长播放，转写由浏览器检测停滞与收尾超时，仍接受本轮取消。
+          const timer = request.name === "transcribeAudio" ? undefined : setTimeout(() => finish({ error: "画布调用超时，请确认画布仍然打开" }), 120000);
           pendingCalls.set(callId, { cwd, finish });
           activeCalls.add(callId);
           signal?.addEventListener("abort", abort, { once: true });
-          try { send({ type: "canvasCall", callId, name: operation.name, args }); }
+          try { send({ type: "canvasCall", callId, name: request.name, args }); }
           catch (error) { finish({ error: (error instanceof Error ? error.message : "") || "发送画布调用失败" }); }
         });
       });

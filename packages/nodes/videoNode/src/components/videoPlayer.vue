@@ -36,7 +36,7 @@
           </div>
         </el-popover>
       </div>
-      <el-dropdown class="captureMenu" trigger="click" placement="top-end" :disabled="!ready || capturing" @visibleChange="captureMenuVisible = $event" @command="captureFrame">
+      <el-dropdown v-if="!readOnly && files" class="captureMenu" trigger="click" placement="top-end" :disabled="!ready || capturing" @visibleChange="captureMenuVisible = $event" @command="captureFrame">
         <el-button class="playerButton" text circle :icon="IconPhotoScan" :loading="capturing" :disabled="!ready || capturing" :aria-expanded="captureMenuVisible" aria-label="截取视频帧" title="截取视频帧" />
         <template #dropdown>
           <el-dropdown-menu>
@@ -55,9 +55,9 @@ import { inject, onBeforeUnmount, ref, watch } from "vue";
 import { useNode, useVueFlow } from "@vue-flow/core";
 import { ElButton, ElDropdown, ElDropdownMenu, ElDropdownItem, ElMessage, ElPopover, ElSlider } from "element-plus";
 import { IconPlayerPlay, IconPlayerPause, IconVolume, IconVolumeOff, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
-import { useNodeFiles } from "@toonflow/nodes-scaffold/runtime";
+import { useNodeFiles } from "@toonflow/nodes-scaffold/workspaceFiles";
 
-const { src, label = "节点视频" } = defineProps<{ src: string; label?: string }>();
+const { src, label = "节点视频", readOnly = false } = defineProps<{ src: string; label?: string; readOnly?: boolean }>();
 const emit = defineEmits<{ loadedmetadata: [event: Event] }>();
 const video = ref<HTMLVideoElement>();
 const fullscreen = ref(false);
@@ -71,13 +71,15 @@ const currentTime = ref(0);
 const duration = ref(0);
 const capturing = ref(false);
 const captureMenuVisible = ref(false);
-const { node } = useNode();
-const { addNodes, findNode, getNodes, nodeTypes } = useVueFlow();
-const files = useNodeFiles();
+// ACT: 只读预览挂载时不连接节点和工作区；从只读切换到编辑模式时重新挂载播放器。
+const node = readOnly ? undefined : useNode().node;
+const flow = readOnly ? undefined : useVueFlow();
+const files = readOnly ? undefined : useNodeFiles();
 const getCanvas = inject<(() => { id: string } | undefined) | undefined>("canvas", undefined);
 let captureController: AbortController | undefined;
 
 watch(() => getCanvas?.()?.id, () => captureController?.abort(), { flush: "sync" });
+watch(() => readOnly, value => { if (value) captureController?.abort(); }, { flush: "sync" });
 watch(() => src, () => {
   captureController?.abort();
   ready.value = false;
@@ -201,7 +203,8 @@ function loadFrame(source: HTMLVideoElement, time: number, signal: AbortSignal) 
 }
 
 async function captureFrame(command: "current" | "first" | "last") {
-  if (!video.value || !ready.value || capturing.value) return;
+  if (readOnly || !node || !flow || !files || !video.value || !ready.value || capturing.value) return;
+  const { addNodes, findNode, getNodes, nodeTypes } = flow;
   if (!nodeTypes?.value?.["remote-imageNode"]) return void ElMessage.error("请先启用图片节点插件");
   capturing.value = true;
   const controller = captureController = new AbortController();
@@ -209,7 +212,7 @@ async function captureFrame(command: "current" | "first" | "last") {
   let frameVideo: HTMLVideoElement | undefined;
   let uploadStarted = false;
   let committed = false;
-  let workspace: ReturnType<typeof files.getWorkspaceFiles> | undefined;
+  let workspace: ReturnType<NonNullable<typeof files>["getWorkspaceFiles"]> | undefined;
   try {
     let source = video.value;
     if (command !== "current") {

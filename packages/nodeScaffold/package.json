@@ -15,6 +15,7 @@
     "./nodeDocument": "./src/nodeDocument.ts",
     "./nodeAi": "./src/nodeAi.ts",
     "./nodeFfmpeg": "./src/nodeFfmpeg.ts",
+    "./nodeAsr": "./src/nodeAsr.ts",
     "./workspaceFiles": "./src/workspaceFiles.ts",
     "./nodeTools": "./src/nodeTools.ts"
   },
@@ -27,6 +28,7 @@
     "element-plus": "^2.14.5"
   },
   "dependencies": {
+    "@toonflow/asr": "workspace:*",
     "@toonflow/file": "workspace:*",
     "@toonflow/ffmpeg": "workspace:*",
     "@earendil-works/pi-agent-core": "0.85.1",

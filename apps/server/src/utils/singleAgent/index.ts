@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { mkdir, rm } from "@toonflow/file";
 import { t } from "@/lib/i18n";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-import type { AgentSession, CreateAgentSessionOptions, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { QuestionContext } from "@toonflow/tools-scaffold/runtime";
 import { createAgentToolContext } from "@/agent/tools";
 import { createAgentModel } from "@/agent/runtime/model";
@@ -12,6 +12,7 @@ import { createQuestionContext, answerQuestion } from "@/agent/bridge/question";
 import { listTools, loadTool, validateToolConfig } from "@/utils/plugins/tools";
 import { browserRuntime } from "@/utils/browser";
 import conf from "@/utils/conf";
+import type { ThinkingLevel } from "@/lib/modelReasoning";
 import type { SingleAgentEvent, SingleAgentResult, SingleAgentStatus, SingleAgentToolDescriptor, SingleAgentToolReference, SingleAgentToolResult } from "./types";
 
 type ClientCall = {
@@ -164,7 +165,7 @@ export async function run(options: {
   prompt: string;
   providerId: string;
   modelId: string;
-  thinkingLevel?: CreateAgentSessionOptions["thinkingLevel"];
+  thinkingLevel?: ThinkingLevel;
 }, send: (event: SingleAgentEvent) => void, signal?: AbortSignal, onStart?: () => void) {
   const state = getSession(options.sessionId);
   if (state.active) throw Object.assign(new Error("此对话正在运行，请等待当前回复完成"), { status: 409 });
@@ -203,8 +204,7 @@ export async function run(options: {
         finally { finishAction(active); }
       },
     }));
-    const thinkingLevel = options.thinkingLevel ?? "off";
-    const { runtime } = await createAgentModel(options.providerId, options.modelId, thinkingLevel);
+    const { runtime, effectiveThinkingLevel } = await createAgentModel(options.providerId, options.modelId, options.thinkingLevel);
     active.controller.signal.throwIfAborted();
     const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
     const agentDir = join(state.cwd, ".agent");
@@ -218,7 +218,7 @@ export async function run(options: {
     active.controller.signal.throwIfAborted();
     const { session } = await createAgentSession({
       cwd: state.cwd, agentDir, modelRuntime: runtime, model: runtime.getModel(options.providerId, options.modelId),
-      thinkingLevel, sessionManager: state.history, settingsManager, resourceLoader,
+      thinkingLevel: effectiveThinkingLevel, sessionManager: state.history, settingsManager, resourceLoader,
       tools: tools.map(tool => tool.name), customTools: tools,
     });
     configureAgentRequests(session);

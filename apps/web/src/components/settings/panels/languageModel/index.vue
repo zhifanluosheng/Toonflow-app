@@ -43,7 +43,7 @@
 import { computed, defineAsyncComponent, ref, shallowRef, type Component } from "vue";
 import axios from "axios";
 import { ElMessage } from "element-plus";
-import { customProviders, saveSettings, type CustomProvider } from "@/stores/settings";
+import { customProviders, saveSettings, type CustomProvider, type CustomProviderModel } from "@/stores/settings";
 import { IconPlus, IconSettings, IconEdit, IconTrash, IconRefresh } from "@tabler/icons-vue";
 import { languageProviders } from "@toonflow/providers";
 import logoUrl from "@toonflow/assets/logo.svg";
@@ -121,7 +121,11 @@ async function fetchProviderModels(provider: CustomProvider) {
       if (latest.apiUrl !== apiUrl || latest.protocol !== protocol || latest.apiKey !== apiKey) {
         throw new Error("供应商配置已变更，请重试");
       }
-      return { customProviders: current.map(item => item?.id === id ? { ...item, models: data.data } : item) };
+      const models = (data.data as CustomProviderModel[]).map(model => {
+        const saved = (latest.models as CustomProviderModel[]).find(item => item.id === model.id);
+        return saved?.reasoningEfforts === undefined ? model : { ...model, reasoningEfforts: saved.reasoningEfforts };
+      });
+      return { customProviders: current.map(item => item?.id === id ? { ...item, models } : item) };
     });
   } catch (error) {
     ElMessage.error(axios.isAxiosError(error) ? error.response?.data?.message || "获取模型列表失败，请重试" : error instanceof Error ? error.message : "获取模型列表失败，请重试");

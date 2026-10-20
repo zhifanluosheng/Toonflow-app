@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
 import { canvasShortcutFields, defaultCanvasShortcuts, getShortcutBindings, isShortcutAllowed, normalizeShortcut, type CanvasShortcuts } from "@/lib/canvasShortcuts";
 import { normalizeNodeMenu, type StoredNodeMenuItem } from "@toonflow/server/nodeMenu";
+import type { ReasoningEfforts, ThinkingLevel } from "@toonflow/server/modelReasoning";
 import "element-plus/es/components/message/style/css";
 
 export const settings = ref<Record<string, unknown>>({});
@@ -27,13 +28,13 @@ export const settingsStorage = {
   },
 };
 
-export const defaultUiSettings = { theme: "light", language: "system", primaryColor: "#409eff", fontScale: 100, mobileScale: 75, radius: 8, startupAnimation: true };
+export const defaultUiSettings = { theme: "dark", language: "system", primaryColor: "#409eff", fontScale: 100, mobileScale: 75, radius: 8, startupAnimation: true };
 export const uiSettings = computed(() => {
   const raw = settings.value.ui;
   const ui = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
   return {
     language: normalizeLocale(ui.language) ?? "system" as const,
-    theme: ui.theme === "dark" || ui.theme === "system" ? ui.theme : "light",
+    theme: ui.theme === "light" || ui.theme === "dark" || ui.theme === "system" ? ui.theme : defaultUiSettings.theme,
     primaryColor: typeof ui.primaryColor === "string" && /^#[\da-f]{6}$/i.test(ui.primaryColor) ? ui.primaryColor : defaultUiSettings.primaryColor,
     fontScale: typeof ui.fontScale === "number" && Number.isFinite(ui.fontScale) ? Math.min(125, Math.max(85, ui.fontScale)) : defaultUiSettings.fontScale,
     mobileScale: typeof ui.mobileScale === "number" && Number.isFinite(ui.mobileScale) ? Math.min(100, Math.max(50, ui.mobileScale)) : defaultUiSettings.mobileScale,
@@ -87,16 +88,31 @@ export const privacySettings = computed(() => {
   };
 });
 
-export type CustomProviderModel = { id: string; label: string; contextWindow?: number; maxOutputTokens?: number };
+export type CustomProviderModel = { id: string; label: string; contextWindow?: number; maxOutputTokens?: number; reasoningEfforts?: ReasoningEfforts };
 export type CustomProvider = { id: string; label: string; icon?: string; version?: string; apiUrl: string; apiKey: string; protocol: string; models: CustomProviderModel[] };
 export const customProviders = computed<CustomProvider[]>(() => Array.isArray(settings.value.customProviders)
   ? settings.value.customProviders.filter((item): item is CustomProvider => !!item && typeof item.id === "string" && typeof item.label === "string" && Array.isArray(item.models)
     && item.models.every((model: CustomProviderModel) => !!model && typeof model.id === "string" && typeof model.label === "string"))
   : []);
 
+type ResolvedAiModel = { providerId: string; modelId: string; reasoningLevels: ThinkingLevel[] };
+const resolvedModelReasoning = ref<Partial<Record<string, ThinkingLevel[]>>>({});
 export const modelChoices = computed(() => customProviders.value.flatMap(provider => provider.models.map(model => ({
   value: JSON.stringify([provider.id, model.id]), providerId: provider.id, modelId: model.id, label: model.label, contextWindow: model.contextWindow,
+  reasoningLevels: resolvedModelReasoning.value[JSON.stringify([provider.id, model.id])],
 }))));
+
+function applyModelReasoning(models: ResolvedAiModel[]) {
+  resolvedModelReasoning.value = Object.fromEntries(models.map(model => [JSON.stringify([model.providerId, model.modelId]), model.reasoningLevels]));
+}
+
+async function loadModelReasoning() {
+  const { data } = await axios.get<{ code: number; data: ResolvedAiModel[] }>(
+    "/api/ai/models", { headers: { "Cache-Control": "no-cache", "x-toonflow-workspace": "1" } },
+  );
+  if (data.code !== 200 || !Array.isArray(data.data)) throw new Error("读取模型推理等级失败");
+  applyModelReasoning(data.data);
+}
 
 export async function loadSettings() {
   if (settingsReady) return;
@@ -106,6 +122,7 @@ export async function loadSettings() {
     throw new Error("读取设置失败");
   }
   settings.value = data.data;
+  await loadModelReasoning();
   // 等初始化引发的监听执行完，再允许自动保存。
   await nextTick();
   settingsReady = true;
@@ -117,10 +134,11 @@ export function saveSettings(update?: (current: Record<string, unknown>) => Reco
     const patch = update?.(settings.value);
     if (update && !patch) return false;
     const requestedNodeMenu = JSON.stringify(((patch?.general ?? settings.value.general) as { nodeMenu?: unknown } | undefined)?.nodeMenu);
-    const { data } = await axios.put<{ code: number; data: { customProviders?: CustomProvider[]; mediaProvider?: { id: string }; modelRefreshErrors?: string[]; nodeMenu?: StoredNodeMenuItem[] | null } | null }>(
+    const { data } = await axios.put<{ code: number; data: { customProviders?: CustomProvider[]; mediaProvider?: { id: string }; modelRefreshErrors?: string[]; nodeMenu?: StoredNodeMenuItem[] | null; aiModels?: ResolvedAiModel[] } | null }>(
       "/api/settings/save", { settings: { ...settings.value, ...patch } }, { headers: { "x-toonflow-workspace": "1" } },
     );
     if (data.code !== 200) throw new Error("保存设置失败");
+    if (data.data?.aiModels) applyModelReasoning(data.data.aiModels);
     const providers = data.data?.customProviders;
     if ((patch && Object.hasOwn(patch, "customProviders")) || providers) invalidateNodeModels("language");
     if (patch || providers) {

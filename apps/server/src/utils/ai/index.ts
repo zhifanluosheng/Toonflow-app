@@ -2,7 +2,8 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
-import type { Context, Model } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type Context, type KnownApi, type Model, type ThinkingLevelMap } from "@earendil-works/pi-ai";
+import { defaultThinkingLevels, thinkingLevels, type ThinkingLevel } from "@/lib/modelReasoning";
 import { z } from "zod";
 import conf from "@/utils/conf";
 import { readReference } from "@/utils/media/generation";
@@ -17,6 +18,13 @@ import { readDocument } from "@/utils/documents";
 export { fetchProviderModels } from "@/utils/ai/models";
 export { refreshProviderModels } from "@/utils/ai/initialize";
 
+export const reasoningEffortsSchema = z.union([
+  z.literal(false),
+  z.partialRecord(z.enum(thinkingLevels), z.string().min(1).refine(value => value.trim() === value, "接口值不能包含首尾空白").nullable())
+    .refine(value => Object.entries(value).every(([level, wire]) => level === "off" || typeof wire === "string"), "仅关闭档位可省略接口值")
+    .refine(value => Object.keys(value).some(level => level !== "off"), "请至少声明一个推理档位"),
+]);
+
 export const providerSchema = z.object({
   apiUrl: z.url({ protocol: /^https?$/ }),
   apiKey: z.string(),
@@ -27,10 +35,41 @@ export const providerSchema = z.object({
     id: z.string(), label: z.string(),
     contextWindow: z.number().int().positive().optional(),
     maxOutputTokens: z.number().int().positive().optional(),
+    reasoningEfforts: reasoningEffortsSchema.optional(),
   })),
 });
 
-const builtinModels = getBuiltinProviders().flatMap(provider => getBuiltinModels(provider));
+const builtinModels: Model<KnownApi>[] = getBuiltinProviders().flatMap(provider => getBuiltinModels(provider));
+
+export function getModelReasoning(providerId: string, model: z.infer<typeof providerSchema>["models"][number], protocol: string) {
+  const matches = builtinModels.filter(item => item.id === model.id);
+  const base = matches.find(item => item.provider.toLowerCase() === providerId.toLowerCase() && item.api === protocol);
+  const candidates = base ? [base] : matches;
+  const efforts = model.reasoningEfforts;
+  const supported = candidates.map(item => item.reasoning ? getSupportedThinkingLevels(item) : []);
+  const wireValue = (item: Model<KnownApi>, level: ThinkingLevel) => item.thinkingLevelMap?.[level] ?? (level === "off" ? undefined : level);
+  // ACT: 中转站仅继承同 ID 模型共同支持且接口值一致的档位，不猜别名或取能力全集。
+  const inheritedLevels: ThinkingLevel[] = candidates.length
+    ? thinkingLevels.filter(level => candidates.every((item, index) => supported[index]!.includes(level)
+      && wireValue(item, level) === wireValue(candidates[0]!, level)))
+    // ACT: 目录未知不等于禁用，保留旧版低中高；额外档位由模型显式声明。
+    : [...defaultThinkingLevels];
+  const reasoningLevels = efforts === false ? [] : efforts
+    ? thinkingLevels.filter(level => Object.hasOwn(efforts, level))
+    : inheritedLevels;
+  const reasoning = reasoningLevels.length > 0;
+  const thinkingLevelMap: ThinkingLevelMap = {};
+  for (const level of thinkingLevels) {
+    if (!reasoningLevels.includes(level)) { thinkingLevelMap[level] = null; continue; }
+    const wire = efforts ? efforts[level] : candidates[0] ? wireValue(candidates[0], level) : level;
+    if (wire != null) thinkingLevelMap[level] = wire;
+  }
+  // ACT: 显式接口值声明使用 Anthropic effort 协议，避免 SDK 将映射值改为 token 预算。
+  const compat = protocol === "anthropic-messages" && efforts
+    ? { ...base?.compat, forceAdaptiveThinking: true, supportsMidConvoEffort: false }
+    : base?.compat;
+  return { reasoning, thinkingLevelMap, reasoningLevels, compat };
+}
 
 export function getModelLimits(providerId: string, model: z.infer<typeof providerSchema>["models"][number]) {
   const limits = modelContextLimits.find(item => item.id === model.id)
@@ -61,7 +100,7 @@ export function getConfiguredModel(providerId: string, modelId: string) {
   const baseUrl = new URL(provider.apiUrl);
   if (baseUrl.pathname === "/") baseUrl.pathname = "/v1";
   const limits = getModelLimits(providerId, model);
-  return { provider, model: { ...model, contextWindow: limits.contextWindow, maxOutputTokens: limits.maxTokens }, baseUrl: baseUrl.href.replace(/\/+$/, "") };
+  return { provider, model: { ...model, ...getModelReasoning(providerId, model, provider.protocol), contextWindow: limits.contextWindow, maxOutputTokens: limits.maxTokens }, baseUrl: baseUrl.href.replace(/\/+$/, "") };
 }
 
 export function listAiModels() {
@@ -76,6 +115,7 @@ export function listAiModels() {
       return {
         providerId: provider.id, providerLabel: provider.label, protocol: provider.protocol, modelId: model.id, label: model.label,
         contextWindow: limits.contextWindow, maxOutputTokens: limits.maxTokens,
+        reasoningLevels: getModelReasoning(provider.id, model, provider.protocol).reasoningLevels,
       };
     });
   });

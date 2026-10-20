@@ -1,6 +1,8 @@
 import { copyFile, cp, existsSync, mkdir, readFile, readdir, realpath, rm, writeAtomic } from "@toonflow/file";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import config from "../../electrobun.config";
+import nodeBuildPlugin from "./nodeBuildPlugin";
+import { installBrowserCompatibility } from "./browserCompatibility";
 
 const projectRoot = resolve(import.meta.dir, "../..");
 const buildRoot = join(projectRoot, "build/ohos");
@@ -12,7 +14,8 @@ const node = join(deveco, "tools/node/node.exe");
 const hvigor = join(deveco, "tools/hvigor/bin/hvigorw.js");
 const ohpm = join(deveco, "tools/ohpm/bin/pm-cli.js");
 const setup = process.argv[2] === "setup";
-const runtimePath = resolve(process.env.ohosBunPath || join(buildRoot, "runtime/bun"));
+const runtimePath = resolve(process.env.ohosNodePath || join(buildRoot, "runtime/libnode.so"));
+const nodeHeaders = resolve(process.env.ohosNodeHeaders || join(buildRoot, "nodeHeaders/node-v24.2.0/include/node"));
 const abi = process.env.ohosArch || "arm64-v8a";
 const version = config.app.version;
 if (process.argv.length > (setup ? 3 : 2)) throw new Error("用法：bun compat/ohos/build.ts [setup]");
@@ -24,13 +27,13 @@ const versionCode = major * 1000000 + minor * 1000 + patch;
 if (![major, minor, patch].every(Number.isSafeInteger) || minor > 999 || patch > 999 || versionCode <= 0 || versionCode > 2147483647) {
   throw new Error("OHOS 版本号超出 versionCode 范围，minor 和 patch 必须为 0–999。");
 }
-for (const path of [node, hvigor, ohpm, join(sdk, "toolchains/lib/hap-sign-tool.jar"), runtimePath]) {
+for (const path of [node, hvigor, ohpm, join(sdk, "toolchains/lib/hap-sign-tool.jar"), runtimePath, join(nodeHeaders, "node.h"), join(buildRoot, "runtime/nodeLicense.txt")]) {
   if (!existsSync(path)) throw new Error(`找不到 ${path}。请安装 DevEco Studio，并显式执行 bun run --cwd compat/ohos setup。`);
 }
 const runtime = await readFile(runtimePath);
 const machine = runtime.length >= 20 ? runtime.readUInt16LE(18) : 0;
-if (runtime.subarray(0, 4).toString("hex") !== "7f454c46" || runtime[4] !== 2 || runtime[5] !== 1 || machine !== (abi === "arm64-v8a" ? 183 : 62)) {
-  throw new Error(`Bun ELF 与 ${abi} 不匹配。springmin/bun 的默认发布物仅支持 ARM64；x86_64 需要单独提供兼容 OHOS 的 ohosBunPath。`);
+if (runtime.subarray(0, 4).toString("hex") !== "7f454c46" || runtime[4] !== 2 || runtime[5] !== 1 || runtime.readUInt16LE(16) !== 3 || machine !== (abi === "arm64-v8a" ? 183 : 62)) {
+  throw new Error(`Node 共享库与 ${abi} 不匹配；x86_64 需要单独提供兼容 OHOS 的 ohosNodePath 和同版本头文件。`);
 }
 const env = { ...process.env, JAVA_HOME: join(deveco, "jbr"), DEVECO_SDK_HOME: sdkRoot };
 async function run(command: string[], cwd = staging) {
@@ -73,9 +76,65 @@ await write("entry/src/main/module.json5", { module: {
 } });
 await write("entry/src/main/resources/base/profile/mainPages.json", { src: ["pages/index"] });
 await write("entry/src/main/resources/base/element/color.json", { color: [{ name: "startBackground", value: "#18181b" }] });
-await write("entry/src/main/cpp/CMakeLists.txt", `cmake_minimum_required(VERSION 3.5.0)\nproject(toonflowRuntime)\nadd_library(toonflowRuntime SHARED runtime.cpp)\ntarget_compile_features(toonflowRuntime PRIVATE cxx_std_17)\ntarget_link_libraries(toonflowRuntime PUBLIC libace_napi.z.so libhilog_ndk.z.so)\n`);
+await write("entry/src/main/cpp/CMakeLists.txt", `cmake_minimum_required(VERSION 3.5.0)
+project(toonflowRuntime)
+add_library(nodeRuntime SHARED IMPORTED)
+set_target_properties(nodeRuntime PROPERTIES IMPORTED_LOCATION "\${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/${abi}/libnode.so")
+add_library(toonflowNodeHost SHARED nodeHost.cpp imageNative.cpp)
+target_compile_features(toonflowNodeHost PRIVATE cxx_std_20)
+target_compile_options(toonflowNodeHost PRIVATE -fvisibility=hidden)
+set_source_files_properties(nodeHost.cpp PROPERTIES INCLUDE_DIRECTORIES "${nodeHeaders.replaceAll("\\", "/")}")
+target_link_libraries(toonflowNodeHost PRIVATE nodeRuntime image_source image_packer pixelmap)
+target_link_options(toonflowNodeHost PRIVATE -Wl,-z,defs)
+set_target_properties(toonflowNodeHost PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
+add_library(toonflowRuntime SHARED runtime.cpp)
+target_compile_features(toonflowRuntime PRIVATE cxx_std_17)
+target_compile_options(toonflowRuntime PRIVATE -fvisibility=hidden)
+target_link_libraries(toonflowRuntime PUBLIC libace_napi.z.so libhilog_ndk.z.so)
+target_link_options(toonflowRuntime PRIVATE -Wl,-z,defs)
+`);
 await copyFile(join(import.meta.dir, "native/runtime.cpp"), join(staging, "entry/src/main/cpp/runtime.cpp"));
+await copyFile(join(import.meta.dir, "native/nodeHost.cpp"), join(staging, "entry/src/main/cpp/nodeHost.cpp"));
+for (const name of ["imageNative.cpp", "imageNative.h"]) {
+  await copyFile(join(import.meta.dir, "native", name), join(staging, "entry/src/main/cpp", name));
+}
 await cp(join(import.meta.dir, "native/ets"), join(staging, "entry/src/main/ets"), { recursive: true });
+await write("entry/src/main/ets/browserCompatibility.ets", `export default ${JSON.stringify(`(${installBrowserCompatibility.toString()})();`)};\n`);
+const nativeDirectory = join(staging, "entry/libs", abi);
+await mkdir(nativeDirectory, { recursive: true });
+await rm(join(nativeDirectory, "libbun.so"), { force: true });
+// ACT: 发布库 SONAME 带 ABI 后缀；HAP 原生库使用 .so 文件名，只调整链接名，执行代码不变。
+const packagedRuntime = Buffer.from(runtime);
+const programHeaders = Number(runtime.readBigUInt64LE(32));
+const programHeaderSize = runtime.readUInt16LE(54);
+const programHeaderCount = runtime.readUInt16LE(56);
+const segments: { offset: number; address: number; size: number }[] = [];
+let dynamicOffset = 0;
+let dynamicSize = 0;
+for (let index = 0; index < programHeaderCount; index++) {
+  const offset = programHeaders + index * programHeaderSize;
+  const type = runtime.readUInt32LE(offset);
+  if (type === 3) throw new Error("OHOS Node 必须是真正共享库，不能使用 PIE 可执行文件");
+  if (type === 1) segments.push({ offset: Number(runtime.readBigUInt64LE(offset + 8)), address: Number(runtime.readBigUInt64LE(offset + 16)), size: Number(runtime.readBigUInt64LE(offset + 32)) });
+  if (type === 2) { dynamicOffset = Number(runtime.readBigUInt64LE(offset + 8)); dynamicSize = Number(runtime.readBigUInt64LE(offset + 32)); }
+}
+let stringsAddress = 0;
+let nameOffset = -1;
+for (let offset = dynamicOffset; offset < dynamicOffset + dynamicSize; offset += 16) {
+  const type = Number(runtime.readBigInt64LE(offset));
+  if (type === 0) break;
+  if (type === 5) stringsAddress = Number(runtime.readBigUInt64LE(offset + 8));
+  if (type === 14) nameOffset = Number(runtime.readBigUInt64LE(offset + 8));
+}
+const stringsSegment = segments.find(segment => stringsAddress >= segment.address && stringsAddress < segment.address + segment.size);
+if (!stringsSegment || nameOffset < 0) throw new Error("Node 共享库缺少动态链接名");
+const nameStart = stringsSegment.offset + stringsAddress - stringsSegment.address + nameOffset;
+const nameEnd = runtime.indexOf(0, nameStart);
+if (nameStart < 0 || nameEnd < nameStart || nameEnd - nameStart > 255) throw new Error("Node 动态链接名越界或无效");
+const originalName = runtime.subarray(nameStart, nameEnd).toString();
+if (!/^libnode\.so(?:\.\d+)?$/.test(originalName)) throw new Error(`不支持的 Node 动态链接名：${originalName}`);
+packagedRuntime.write("libnode.so\0", nameStart);
+await writeAtomic(join(nativeDirectory, "libnode.so"), packagedRuntime);
 if (setup) {
   await run([node, ohpm, "install", "--all"]);
   console.log(`已准备鸿蒙工程与本地 NAPI 类型：${staging}`);
@@ -93,10 +152,27 @@ if (existsSync(payload)) {
 await mkdir(payload, { recursive: true });
 const result = await Bun.build({
   entrypoints: [join(projectRoot, "apps/mobile/src/server.ts"), join(projectRoot, "packages/mcp/src/stdio.ts")],
-  target: "bun", format: "esm", splitting: true, outdir: payload, naming: "[name].js", minify: true,
+  target: "node", format: "esm", splitting: true, outdir: payload, naming: "[name].js", minify: true,
+  plugins: [nodeBuildPlugin],
   external: ["@silvia-odwyer/photon-node", "@firecrawl/anydoc", "@firecrawl/anydoc-wasm"], define: { "process.env.appVersion": JSON.stringify(version) },
 });
 if (!result.success) throw new AggregateError(result.logs, "构建 OHOS 移动端服务失败");
+const aiDirectory = dirname(Bun.resolveSync("@earendil-works/pi-ai", join(projectRoot, "apps/server")));
+const googleDirectory = dirname(Bun.resolveSync("@google/genai", aiDirectory));
+const fetchPath = Bun.resolveSync("node-fetch/src/index.js", googleDirectory);
+const codingAgentDirectory = dirname(Bun.resolveSync("@earendil-works/pi-coding-agent", join(projectRoot, "apps/server")));
+const webApiPath = Bun.resolveSync("undici/index.js", codingAgentDirectory);
+const bootstrap = await Bun.build({
+  entrypoints: [join(import.meta.dir, "bootstrap.ts")], target: "node", format: "cjs", outdir: payload,
+  naming: "bootstrap.cjs", minify: true,
+  plugins: [{ name: "ohosFetch", setup(build) {
+    build.onResolve({ filter: /^toonflow:nodeFetch$/ }, () => ({ path: fetchPath }));
+    build.onResolve({ filter: /^toonflow:webApi$/ }, () => ({ path: webApiPath }));
+    build.onResolve({ filter: /^toonflow:webRequest$/ }, () => ({ path: join(dirname(webApiPath), "lib/web/fetch/request.js") }));
+    build.onResolve({ filter: /^toonflow:webResponse$/ }, () => ({ path: join(dirname(webApiPath), "lib/web/fetch/response.js") }));
+  } }],
+});
+if (!bootstrap.success) throw new AggregateError(bootstrap.logs, "构建 OHOS 服务引导失败");
 for (const directory of ["web", "nodes", "tools", "ext", "providers", "skills"]) {
   await cp(join(projectRoot, "build", directory), join(payload, directory), { recursive: true });
 }
@@ -116,15 +192,12 @@ await writeAtomic(join(payload, "revision.txt"), payloadRevision);
 const raw = join(staging, "entry/src/main/resources/rawfile");
 await mkdir(raw, { recursive: true });
 await rm(join(raw, "payload.zip"), { force: true });
-await copyFile(runtimePath, join(raw, "bun"));
-await copyFile(join(import.meta.dir, "bunLicense.md"), join(raw, "bunLicense.md"));
+await rm(join(raw, "bun"), { force: true });
+await rm(join(raw, "bunLicense.md"), { force: true });
+await copyFile(join(buildRoot, "runtime/nodeLicense.txt"), join(raw, "nodeLicense.txt"));
 await copyFile(join(import.meta.dir, "readme.md"), join(raw, "readme.md"));
 await writeAtomic(join(raw, "revision.txt"), payloadRevision);
-const archiveProcess = Bun.spawn([
-  "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-  "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory($env:ohosPayload, $env:ohosArchive)",
-], { env: { ...env, ohosPayload: payload, ohosArchive: join(raw, "payload.zip") }, stdout: "inherit", stderr: "inherit" });
-if (await archiveProcess.exited !== 0) throw new Error("压缩 OHOS 资源失败");
+await run(["tar.exe", "--format=zip", "-cf", join(raw, "payload.zip"), "-C", payload, "."]);
 await run([node, hvigor, "--mode", "module", "-p", "product=default", "-p", "module=entry@default", "-p", "buildMode=debug", "assembleHap", "--no-daemon"]);
 const signed = signingConfig ? "signed" : "unsigned";
 const output = join(buildRoot, `toonflow-${version}-ohos-${abi}-${signed}.hap`);

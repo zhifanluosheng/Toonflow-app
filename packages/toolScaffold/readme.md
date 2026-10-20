@@ -30,6 +30,10 @@
 
 `context.skills` 提供统一的技能扫描、读取、新建和修改，复用宿主的 SDK 扫描与文件落盘。`skillOperator` 据此操作工作区 `skill/` 和全局 `data/skills/`，无需把 Pi SDK 打入工具。读取、新建、修改默认开启，可在工具配置中分别关闭；目录查询始终保留，普通工作区文件的写入范围不因此扩大。
 
+`await context.asr.transcribe(path, { lang?, signal? })` 使用 `@toonflow/asr` 将工作区音频识别为文本，`path` 支持工作区内的相对路径或绝对路径，默认语言为 `zh-CN`。音频不能为空且不能超过 100 MB。工具在服务端执行，识别通过本轮绑定画布转交发起对话的浏览器；未连接画布时明确报错。此宿主能力不额外注册 Agent 工具。浏览器须支持音轨识别，API 存在不保证识别服务可用；当前复用画布通道的串行队列，转写不受普通画布操作的 120 秒总时限限制，沿用 ASR 的 30 秒无响应/播放停滞与 15 秒收尾超时。停止整轮对话或切换工作区会取消浏览器识别；单独取消工具的 `signal` 会立即结束服务端等待，浏览器仍可能运行至自然结束或自身超时。浏览器原生识别可能使用其供应商的在线服务，不能视为离线识别。
+
+工具的浏览器组件可从 `@toonflow/tools-scaffold/client` 导入 `createBrowserAsr`、`isBrowserAsrSupported`、`isBrowserAudioAsrSupported`、`transcribeBrowserAudio` 及相关类型，直接复用 `@toonflow/asr`。这些浏览器函数不从服务端 `runtime` 入口导出。
+
 `await context.ffmpeg(signal?)` 获取绑定 `context.cwd` 的原生 `@renmu/fluent-ffmpeg` 工厂，全局工具和团队私有工具均可使用；工具无需打包执行库。工厂构造参数、链式方法、事件、流、`.run()`、`.save()`、`.pipe()`、`.clone()` 和 `ffprobe` 回调均沿用原生 API，不再记录 JSON 计划。
 
 ```ts

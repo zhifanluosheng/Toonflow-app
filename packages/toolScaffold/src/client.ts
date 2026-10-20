@@ -4,6 +4,9 @@ import axios from "axios";
 import formCreate from "@form-create/element-ui";
 import type { Component } from "vue";
 
+export { createBrowserAsr, isBrowserAsrSupported, isBrowserAudioAsrSupported, transcribeBrowserAudio } from "@toonflow/asr";
+export type { BrowserAsrState, BrowserAsrResult, BrowserAsrError, BrowserAsrOptions, BrowserAudioAsrOptions } from "@toonflow/asr";
+
 type ToolRenderer = { name: string; tools: string[]; url: string };
 const toolWindow = window as typeof window & {
   toonflowToolHost?: { vue: typeof vueRuntime; elementPlus: typeof elementPlusRuntime; axios: typeof axios; formCreate: typeof formCreate };

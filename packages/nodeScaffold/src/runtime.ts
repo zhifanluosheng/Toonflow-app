@@ -9,3 +9,4 @@ export * from "./workspaceFiles";
 
 export * from "./nodeAi";
 export * from "./nodeFfmpeg";
+export * from "./nodeAsr";

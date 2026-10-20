@@ -247,7 +247,8 @@ export function configureAgentRequests(session: AgentSession, limits?: { maxRequ
                   status: 413, headers: { "content-type": "application/json", "x-should-retry": "false" },
                 });
               }
-              const response = await request(input, init);
+              // ACT: 工具或用户等待可能让代理关闭空闲连接；每轮重新握手，避免 Bun 复用失效 socket。
+              const response = await request(input, { ...init, keepalive: false });
               if (response.status !== 413) return response;
               http413 = true;
               const headers = new Headers(response.headers);

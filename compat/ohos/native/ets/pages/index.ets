@@ -7,6 +7,7 @@ import util from "@ohos.util";
 import webview from "@ohos.web.webview";
 import zlib from "@ohos.zlib";
 import runtime from "libtoonflowRuntime.so";
+import browserCompatibility from "../browserCompatibility";
 
 interface BrowserProbe {
   missing: string[];
@@ -28,6 +29,7 @@ struct mobilePage {
   @State private message: string = "正在准备 Toonflow…";
   @State private failed: boolean = false;
   @State private ready: boolean = false;
+  @State private browserEnabled: boolean = false;
   private controller: webview.WebviewController = new webview.WebviewController();
   private context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
   private origin: string = "";
@@ -105,7 +107,7 @@ struct mobilePage {
     let destination: fs.File | undefined;
     try {
       destination = await fs.open(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      // ACT: rawfile 在 HAP 中保持未压缩，以 1 MiB 分块提取，避免一次分配整个 Bun 二进制。
+      // ACT: rawfile 在 HAP 中保持未压缩，以 1 MiB 分块提取，避免一次分配整个程序资源包。
       const buffer = new ArrayBuffer(1024 * 1024);
       let offset = 0;
       while (offset < source.length) {
@@ -168,16 +170,6 @@ struct mobilePage {
     // ACT: 可替换程序和 data 分目录；资源更新及失败恢复都不删除用户数据。
     if (fs.accessSync(next)) await fs.rmdir(next);
     if (fs.accessSync(previous)) await fs.rmdir(previous);
-    const runtimeDirectory = `${files}/runtime`;
-    if (!fs.accessSync(runtimeDirectory)) await fs.mkdir(runtimeDirectory);
-    const runtimeRevision = fs.accessSync(`${runtimeDirectory}/revision.txt`)
-      ? await fs.readText(`${runtimeDirectory}/revision.txt`) : "";
-    if (runtimeRevision.trim() !== revision || !fs.accessSync(`${runtimeDirectory}/bun`)) {
-      await this.copyResource("bun", `${runtimeDirectory}/bunNext`);
-      await fs.rename(`${runtimeDirectory}/bunNext`, `${runtimeDirectory}/bun`);
-      await this.writeFile(`${runtimeDirectory}/revision.txt`, revisionBytes.buffer.slice(revisionBytes.byteOffset,
-        revisionBytes.byteOffset + revisionBytes.byteLength));
-    }
     if (!fs.accessSync(`${files}/data`)) await fs.mkdir(`${files}/data`);
   }
 
@@ -187,6 +179,8 @@ struct mobilePage {
     this.starting = true;
     const startupId = ++this.startupId;
     this.ready = false;
+    this.browserEnabled = false;
+    this.attached = false;
     this.failed = false;
     this.stage = "starting";
     this.origin = "";
@@ -198,16 +192,16 @@ struct mobilePage {
       payloadPreparation = preparation.catch(() => {});
       await preparation;
       if (this.disposed || this.startupId !== startupId) return;
-      this.message = "正在启动本地 Bun 服务…";
-      this.setTimeout("本地 Bun 服务启动超时，请退出后重新打开 Toonflow。", 60000);
+      this.message = "正在启动本地服务…";
+      this.setTimeout("本地服务启动超时，请退出后重新打开 Toonflow。", 60000);
       const files = this.context.filesDir;
-      const address: string = await runtime.start(`${files}/runtime/bun`, `${files}/app`, `${files}/data`, this.context.cacheDir);
+      const address: string = await runtime.start(`${files}/app`, `${files}/data`, this.context.cacheDir);
       if (this.disposed || this.startupId !== startupId || this.failed) return;
       const parsed = new url.URL(address);
       const token = parsed.params.get("token");
       if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || parsed.username || parsed.password
         || parsed.pathname !== "/" || !parsed.port || Number(parsed.port) < 1 || Number(parsed.port) > 65535
-        || parsed.hash || !token || !this.uuidPattern.test(token)) throw new Error("Bun 返回了无效的本地服务地址");
+        || parsed.hash || !token || !this.uuidPattern.test(token)) throw new Error("运行时返回了无效的本地服务地址");
       this.origin = parsed.origin;
       this.token = token;
       this.runtimeTimer = setInterval(() => {
@@ -218,7 +212,8 @@ struct mobilePage {
       this.message = "正在检查鸿蒙浏览器能力…";
       this.browserUrl = `${address}&probe=1`;
       this.setTimeout("鸿蒙浏览器启动超时，请退出后重新打开 Toonflow。", 30000);
-      if (this.attached) this.controller.loadUrl(this.browserUrl);
+      this.controller = new webview.WebviewController();
+      this.browserEnabled = true;
     } catch (error) {
       if (startupId === this.startupId) this.showError(`无法启动 Toonflow：${(error as Error).message}`);
     } finally {
@@ -359,45 +354,47 @@ struct mobilePage {
 
   build() {
     Stack() {
-      Web({ src: "about:blank", controller: this.controller })
-        .width("100%")
-        .height("100%")
-        .javaScriptAccess(true)
-        .domStorageAccess(true)
-        .fileAccess(false)
-        .multiWindowAccess(false)
-        .allowWindowOpenMethod(true)
-        .onControllerAttached(() => {
-          this.attached = true;
-          if (this.browserUrl) this.controller.loadUrl(this.browserUrl);
-        })
-        .onLoadIntercept((event) => this.navigate(event.data.getRequestUrl(), event.data.isMainFrame()))
-        .onPageEnd((event) => this.pageFinished(event.url))
-        .onErrorReceive((event) => {
-          if (event.request.isMainFrame() && this.isLocal(event.request.getRequestUrl())) {
-            this.showError(`本地页面加载失败：${event.error.getErrorInfo()}`);
-          }
-        })
-        .onHttpErrorReceive((event) => {
-          if (event.request.isMainFrame() && this.isLocal(event.request.getRequestUrl())) {
-            this.showError(`本地页面返回 HTTP ${event.response.getResponseCode()}`);
-          }
-        })
-        .onRenderExited(() => this.showError("鸿蒙浏览器进程已退出，请重新打开 Toonflow。"))
-      if (!this.ready) {
-        Column({ space: 20 }) {
-          if (!this.failed) LoadingProgress().width(36).height(36)
-          Scroll() {
-            Text(this.message).fontSize(16).fontColor("#1e293b").width("100%")
-          }.width("100%").constraintSize({ maxHeight: "70%" })
-          if (this.failed) Button("重试").onClick(() => this.start())
+      if (this.browserEnabled) {
+        Web({ src: this.browserUrl, controller: this.controller })
+          .width("100%")
+          .height("100%")
+          .javaScriptAccess(true)
+          .javaScriptOnDocumentStart([{ script: browserCompatibility, scriptRules: [this.origin] }])
+          .domStorageAccess(true)
+          .fileAccess(false)
+          .multiWindowAccess(false)
+          .allowWindowOpenMethod(true)
+          .onControllerAttached(() => {
+            this.attached = true;
+          })
+          .onLoadIntercept((event) => this.navigate(event.data.getRequestUrl(), event.data.isMainFrame()))
+          .onPageEnd((event) => this.pageFinished(event.url))
+          .onErrorReceive((event) => {
+            if (event.request.isMainFrame() && this.isLocal(event.request.getRequestUrl())) {
+              this.showError(`本地页面加载失败：${event.error.getErrorInfo()}`);
+            }
+          })
+          .onHttpErrorReceive((event) => {
+            if (event.request.isMainFrame() && this.isLocal(event.request.getRequestUrl())) {
+              this.showError(`本地页面返回 HTTP ${event.response.getResponseCode()}`);
+            }
+          })
+          .onRenderExited(() => this.showError("鸿蒙浏览器进程已退出，请重新打开 Toonflow。"))
         }
-        .padding(32)
-        .width("100%")
-        .height("100%")
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor("#ffffff")
-      }
-    }.width("100%").height("100%")
+        if (!this.ready) {
+          Column({ space: 20 }) {
+            if (!this.failed) LoadingProgress().width(36).height(36)
+            Scroll() {
+              Text(this.message).fontSize(16).fontColor("#1e293b").width("100%")
+            }.width("100%").constraintSize({ maxHeight: "70%" })
+            if (this.failed) Button("重试").onClick(() => this.start())
+          }
+          .padding(32)
+          .width("100%")
+          .height("100%")
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor("#ffffff")
+        }
+      }.width("100%").height("100%")
+    }
   }
-}

@@ -1,4 +1,4 @@
-import { t, translateMessage } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { lstat, readFile } from "@toonflow/file";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
@@ -80,7 +80,7 @@ export function validateNodeConfig(rules: ConfigRule[], config: Record<string, u
     const value = Object.hasOwn(parsed, rule.field) ? parsed[rule.field] : undefined;
     if (value == null || (typeof value === "string" && !value.trim()) || (Array.isArray(value) && !value.length)) {
       const label = typeof rule.title === "string" && rule.title.trim() ? rule.title : rule.field;
-      throw Object.assign(new Error(t`请填写${translateMessage(label)}`), { status: 400 });
+      throw Object.assign(new Error(t`请填写${label}`), { status: 400 });
     }
   }
   return parsed;

@@ -1,305 +1,258 @@
 <template>
-  <div ref="background" class="creativeBackground" aria-hidden="true">
-    <div class="ambientLight" />
-    <div class="lightRibbon" />
-    <div class="dotGrid" />
-    <svg class="flowLines" viewBox="0 0 1440 900" fill="none" preserveAspectRatio="xMidYMin slice">
-      <g v-for="(path, index) in flowPaths" :key="path">
-        <path :d="path" />
-        <path class="flowPulse" :d="path" pathLength="100" :style="{ animationDelay: `${index * -2.3}s` }" />
-      </g>
-      <rect x="216" y="302" width="100" height="64" rx="12" />
-      <rect x="1124" y="226" width="100" height="64" rx="12" />
-      <rect x="968" y="728" width="100" height="64" rx="12" />
-      <path d="m252 322 20 12-20 12zM1144 270l18-18 13 12 14-20 15 26M988 750h60m-60 12h36" />
-      <g class="connectionDots">
-        <circle cx="216" cy="334" r="4" />
-        <circle cx="1224" cy="258" r="4" />
-        <circle cx="1068" cy="760" r="4" />
-        <circle cx="380" cy="640" r="4" />
-      </g>
-    </svg>
-    <div class="sparkleField">
-      <svg
-        v-for="([x, y, size], index) in sparkles"
-        :key="index"
-        class="sparkle"
-        viewBox="0 0 24 24"
-        :style="{
-          left: `${x}%`,
-          top: `${y}%`,
-          width: `${size}px`,
-          height: `${size}px`,
-          animationDelay: `${index * -0.73}s`,
-          animationDuration: `${3.6 + (index % 4) * 0.8}s`,
-        }">
-        <path :d="sparklePath" />
-        <circle cx="12" cy="12" r="1.2" />
-      </svg>
-    </div>
-    <div class="pointerLight" />
-  </div>
+  <canvas ref="fogCanvas" class="pixelFog" aria-hidden="true" />
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import logoUrl from "@toonflow/assets/logo.svg";
 
-const background = ref<HTMLDivElement>();
-const sparklePath = "M12 0C13.8 8.2 15.8 10.2 24 12C15.8 13.8 13.8 15.8 12 24C10.2 15.8 8.2 13.8 0 12C8.2 10.2 10.2 8.2 12 0Z";
-const sparkles = [
-  [8, 16, 14],
-  [19, 10, 8],
-  [34, 13, 12],
-  [58, 9, 9],
-  [76, 15, 18],
-  [91, 11, 8],
-  [5, 39, 10],
-  [15, 48, 18],
-  [87, 38, 15],
-  [95, 55, 11],
-  [69, 23, 9],
-  [7, 72, 15],
-  [23, 84, 10],
-  [39, 70, 8],
-  [54, 89, 12],
-  [70, 80, 16],
-  [86, 90, 9],
-  [94, 76, 18],
-];
-const flowPaths = [
-  "M-40 170H94Q118 170 118 194V310Q118 334 142 334H216",
-  "M1224 258H1286Q1310 258 1310 282V448Q1310 472 1334 472H1480",
-  "M80 752H260Q284 752 284 728V664Q284 640 308 640H380",
-  "M1068 760H1130Q1154 760 1154 736V672Q1154 648 1178 648H1460",
-];
-let events: AbortController | undefined;
+type FogPoint = { x: number; y: number; nx: number; ny: number; ink: number; halo: number; variation: number; pixelIndex: number };
+type LogoMask = { pixels: Uint8ClampedArray; halo: Uint8ClampedArray };
+
+const props = defineProps<{ scrollTop: number }>();
+const fogCanvas = ref<HTMLCanvasElement>();
+const events = new AbortController();
+const maskSize = 320;
+const fogPixelSize = 2;
+const pointer = { x: -1000, y: -1000, targetX: -1000, targetY: -1000, strength: 0, targetStrength: 0 };
+let context: CanvasRenderingContext2D | null = null;
+let fogLayer: HTMLCanvasElement;
+let fogContext: CanvasRenderingContext2D | null = null;
+let fogPixels: ImageData;
+let image: HTMLImageElement;
+let logo: LogoMask | undefined;
+let points: FogPoint[] = [];
+let resizeObserver: ResizeObserver;
+let themeObserver: MutationObserver;
+let reducedMotion: MediaQueryList;
+let animationFrame = 0;
+let elapsed = 9;
+let lastFrame = 0;
+let width = 0;
+let height = 0;
+let step = 6;
+let pixelRatio = 1;
+let inkColor = "";
+
+function sampleLogo(): LogoMask | undefined {
+  const mask = document.createElement("canvas");
+  mask.width = mask.height = maskSize;
+  const maskContext = mask.getContext("2d", { willReadFrequently: true });
+  if (!maskContext) return;
+  maskContext.drawImage(image, 0, 0, maskSize, maskSize);
+  let pixels = maskContext.getImageData(0, 0, maskSize, maskSize).data;
+  let left = maskSize;
+  let top = maskSize;
+  let right = 0;
+  let bottom = 0;
+  for (let y = 0; y < maskSize; y++) {
+    for (let x = 0; x < maskSize; x++) {
+      if (pixels[(y * maskSize + x) * 4 + 3]! < 96) continue;
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
+    }
+  }
+  if (right < left || bottom < top) return;
+  const scale = Math.min((maskSize - 44) / (right - left + 1), (maskSize - 44) / (bottom - top + 1));
+  const logoWidth = (right - left + 1) * scale;
+  const logoHeight = (bottom - top + 1) * scale;
+  maskContext.clearRect(0, 0, maskSize, maskSize);
+  maskContext.drawImage(image, left / maskSize * image.naturalWidth, top / maskSize * image.naturalHeight,
+    (right - left + 1) / maskSize * image.naturalWidth, (bottom - top + 1) / maskSize * image.naturalHeight,
+    (maskSize - logoWidth) / 2, (maskSize - logoHeight) / 2, logoWidth, logoHeight);
+  pixels = maskContext.getImageData(0, 0, maskSize, maskSize).data;
+  const blurred = document.createElement("canvas");
+  blurred.width = blurred.height = maskSize;
+  const blurredContext = blurred.getContext("2d");
+  if (!blurredContext) return;
+  blurredContext.filter = "blur(7px)";
+  blurredContext.drawImage(mask, 0, 0);
+  return { pixels, halo: blurredContext.getImageData(0, 0, maskSize, maskSize).data };
+}
+
+function resize() {
+  const canvas = fogCanvas.value;
+  if (!canvas || !context || !logo) return;
+  width = canvas.clientWidth;
+  height = canvas.clientHeight;
+  if (!width || !height) return syncAnimation();
+  pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+  canvas.width = Math.round(width * pixelRatio);
+  canvas.height = Math.round(height * pixelRatio);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  context.imageSmoothingEnabled = false;
+  fogLayer.width = Math.ceil(width / fogPixelSize);
+  fogLayer.height = Math.ceil(height / fogPixelSize);
+  fogPixels = fogContext!.createImageData(fogLayer.width, fogLayer.height);
+  // ACT: 保留最多 30000 个点的雾带密度；颗粒尺寸单独控制，避免随大屏点距一起变粗。
+  step = Math.max(4, Math.sqrt(width * height / 30000));
+  points = [];
+  for (let x = step / 2; x < width && points.length < 30000; x += step) {
+    for (let y = step / 2; y < height && points.length < 30000; y += step) {
+      const seed = Math.sin(x * 18.23 + y * 73.17) * 43758.55;
+      points.push({ x, y, nx: x / width, ny: y / height, ink: 0,
+        halo: 0, variation: 0.82 + (seed - Math.floor(seed)) * 0.18,
+        pixelIndex: (Math.floor(y / height * fogLayer.height) * fogLayer.width + Math.floor(x / width * fogLayer.width)) * 4 + 3 });
+    }
+  }
+  updateScrollPoints();
+  syncAnimation();
+}
+
+function updateScrollPoints() {
+  if (!logo || !width || !height) return;
+  const logoSize = Math.min(height * 0.86, width * 0.82, 560);
+  const logoX = width * (width < 600 ? 0.53 : 0.76);
+  const logoY = height * 0.45;
+  for (const point of points) {
+    const contentY = point.y + props.scrollTop;
+    point.ny = contentY / height;
+    const maskX = Math.floor((point.x - logoX) / logoSize * maskSize + maskSize / 2);
+    const maskY = Math.floor((contentY - logoY) / logoSize * maskSize + maskSize / 2);
+    const index = (maskY * maskSize + maskX) * 4 + 3;
+    const inMask = maskX >= 0 && maskX < maskSize && maskY >= 0 && maskY < maskSize;
+    point.ink = inMask ? logo.pixels[index]! / 255 : 0;
+    point.halo = inMask ? logo.halo[index]! / 255 : 0;
+  }
+}
+
+watch(() => props.scrollTop, () => {
+  updateScrollPoints();
+  draw();
+});
+
+function draw() {
+  if (!context || !fogContext || !fogPixels || !width || !height) return;
+  context.clearRect(0, 0, width, height);
+  const time = elapsed * 0.7;
+  const radius = width < 600 ? 78 : 112;
+  let columnX = -1;
+  let waveA = 0;
+  let waveB = 0;
+  let waveC = 0;
+  let bandWidth = 0;
+  let modulation = 0;
+  for (const { x, y, nx, ny, ink, halo, variation, pixelIndex } of points) {
+    if (ink > 0.65) {
+      fogPixels.data[pixelIndex] = ink * 0.32 * 255;
+      continue;
+    }
+    if (x !== columnX) {
+      columnX = x;
+      const flowX = 0.7 - nx;
+      const amplitude = 0.08 + Math.abs(flowX) * 0.09;
+      waveA = 0.46 + Math.sin(nx * 7.5 - time) * amplitude + Math.sin(nx * 15 + time * 0.7) * 0.018;
+      waveB = 0.61 + Math.sin(nx * 6.3 - time * 0.79 + 1.7) * amplitude;
+      waveC = 0.24 + Math.sin(nx * 8.1 + time * 0.63 + 3.1) * amplitude;
+      bandWidth = 0.036 + Math.max(0, flowX) * 0.032;
+      modulation = 0.65 + Math.sin(nx * 15 - time * 1.3) * 0.35;
+    }
+    const fog = ny < 1 ? Math.exp(-(((ny - waveA) / bandWidth) ** 2)) * 0.77
+      + Math.exp(-(((ny - waveB) / bandWidth) ** 2)) * 0.53
+      + Math.exp(-(((ny - waveC) / (bandWidth * 0.8)) ** 2)) * 0.42 : 0;
+    const haloStrength = Math.min(1, halo * 2.4) * (0.77 + Math.sin(elapsed * 0.34 * 1.9 + nx * 10 - ny * 6) * 0.12);
+    const hover = pointer.strength > 0.001 ? Math.max(0, 1 - Math.hypot(x - pointer.x, y - pointer.y) / radius) ** 2 * pointer.strength : 0;
+    const mist = Math.min(1, fog * modulation);
+    const size = Math.min(fogPixelSize, (0.55 + step * (mist * 0.49 + haloStrength * 0.75 + hover * 0.47)) * variation);
+    fogPixels.data[pixelIndex] = Math.min(0.95, (ny < 1 ? 0.08 : 0) + mist * 0.3 + haloStrength * 1.1 + hover * 0.2)
+      * (1 - ink) * Math.min(1, (size / fogPixelSize) ** 2) * 255;
+  }
+  // ACT: 点阵统一写入离屏掩膜后批量绘制，避免逐点调用 Canvas fillRect。
+  fogContext.putImageData(fogPixels, 0, 0);
+  context.drawImage(fogLayer, 0, 0, width, height);
+  context.globalCompositeOperation = "source-in";
+  context.fillStyle = inkColor;
+  context.fillRect(0, 0, width, height);
+  context.globalCompositeOperation = "source-over";
+}
+
+function tick(timestamp: number) {
+  animationFrame = 0;
+  if (events.signal.aborted || document.hidden || reducedMotion.matches || !width || !height) return;
+  if (!lastFrame || timestamp - lastFrame >= 1000 / 30) {
+    elapsed += lastFrame ? Math.min((timestamp - lastFrame) / 1000, 0.07) : 0;
+    lastFrame = timestamp;
+    pointer.x += (pointer.targetX - pointer.x) * 0.22;
+    pointer.y += (pointer.targetY - pointer.y) * 0.22;
+    pointer.strength += (pointer.targetStrength - pointer.strength) * 0.18;
+    draw();
+  }
+  animationFrame = requestAnimationFrame(tick);
+}
+
+function syncAnimation() {
+  cancelAnimationFrame(animationFrame);
+  animationFrame = 0;
+  lastFrame = 0;
+  draw();
+  if (logo && width && height && !document.hidden && !reducedMotion.matches && !events.signal.aborted) {
+    animationFrame = requestAnimationFrame(tick);
+  }
+}
+
+function updateColor() {
+  const color = getComputedStyle(fogCanvas.value!).color;
+  if (color === inkColor) return;
+  inkColor = color;
+  draw();
+}
 
 onMounted(() => {
-  const layer = background.value!;
-  const surface = layer.parentElement!;
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  events = new AbortController();
+  const canvas = fogCanvas.value!;
+  context = canvas.getContext("2d");
+  if (!context) return;
+  fogLayer = document.createElement("canvas");
+  fogContext = fogLayer.getContext("2d");
+  if (!fogContext) return;
+  reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const options = { passive: true, signal: events.signal };
-
-  function resetPointer() {
-    layer.style.setProperty("--pointerOpacity", "0");
-    layer.style.setProperty("--driftX", "0px");
-    layer.style.setProperty("--driftY", "0px");
-  }
-
-  function updateMotion() {
-    layer.style.setProperty("--motionState", document.hidden || !document.hasFocus() ? "paused" : "running");
-    resetPointer();
-  }
-
-  surface.addEventListener(
-    "pointermove",
-    (event) => {
-      if (event.pointerType === "touch" || reducedMotion.matches) return;
-      const bounds = layer.getBoundingClientRect();
-      if (!bounds.width || !bounds.height) return;
-      const x = event.clientX - bounds.left;
-      const y = event.clientY - bounds.top;
-      layer.style.setProperty("--pointerX", `${x}px`);
-      layer.style.setProperty("--pointerY", `${y}px`);
-      layer.style.setProperty("--pointerOpacity", "1");
-      layer.style.setProperty("--driftX", `${(x / bounds.width - 0.5) * 24}px`);
-      layer.style.setProperty("--driftY", `${(y / bounds.height - 0.5) * 18}px`);
-    },
-    options
-  );
-
-  surface.addEventListener("pointerleave", resetPointer, options);
-  window.addEventListener("blur", updateMotion, options);
-  window.addEventListener("focus", updateMotion, options);
-  document.addEventListener("visibilitychange", updateMotion, options);
-  reducedMotion.addEventListener("change", resetPointer, options);
-  updateMotion();
+  updateColor();
+  image = new Image();
+  image.onload = () => {
+    if (events.signal.aborted) return;
+    logo = sampleLogo();
+    resize();
+  };
+  image.src = logoUrl;
+  resizeObserver = new ResizeObserver(resize);
+  resizeObserver.observe(canvas);
+  themeObserver = new MutationObserver(updateColor);
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
+  canvas.parentElement!.addEventListener("pointermove", (event) => {
+    if (event.pointerType === "touch" || reducedMotion.matches) return;
+    const bounds = canvas.getBoundingClientRect();
+    pointer.targetX = event.clientX - bounds.left;
+    pointer.targetY = event.clientY - bounds.top;
+    pointer.targetStrength = +(pointer.targetX >= 0 && pointer.targetX <= bounds.width && pointer.targetY >= 0 && pointer.targetY <= bounds.height);
+    if (pointer.strength < 0.01) { pointer.x = pointer.targetX; pointer.y = pointer.targetY; }
+  }, options);
+  canvas.parentElement!.addEventListener("pointerleave", () => { pointer.targetStrength = 0; }, options);
+  window.addEventListener("blur", () => { pointer.targetStrength = 0; }, options);
+  document.addEventListener("visibilitychange", syncAnimation, options);
+  reducedMotion.addEventListener("change", () => {
+    pointer.strength = pointer.targetStrength = 0;
+    syncAnimation();
+  }, options);
 });
 
 onBeforeUnmount(() => {
-  events?.abort();
+  events.abort();
+  cancelAnimationFrame(animationFrame);
+  resizeObserver?.disconnect();
+  themeObserver?.disconnect();
+  if (image) image.onload = null;
 });
 </script>
 
 <style lang="scss" scoped>
-.creativeBackground {
-  --sparkleColor: color-mix(in srgb, var(--el-color-primary) 45%, #b58aff);
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
+.pixelFog {
+  display: block;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
-  background: var(--el-bg-color);
-
-  .ambientLight,
-  .lightRibbon,
-  .dotGrid,
-  .flowLines,
-  .sparkleField,
-  .pointerLight {
-    position: absolute;
-    inset: 0;
-  }
-
-  .ambientLight {
-    inset: -10%;
-    background: radial-gradient(ellipse 45% 36% at 38% 12%, color-mix(in srgb, var(--el-color-primary) 22%, transparent), transparent),
-      radial-gradient(ellipse 38% 42% at 94% 60%, color-mix(in srgb, var(--el-color-primary) 14%, transparent), transparent),
-      radial-gradient(ellipse 32% 30% at 72% 8%, color-mix(in srgb, var(--sparkleColor) 18%, transparent), transparent),
-      radial-gradient(ellipse 35% 35% at 4% 84%, color-mix(in srgb, var(--sparkleColor) 14%, transparent), transparent);
-    animation: ambientDrift 16s ease-in-out infinite alternate;
-    animation-play-state: var(--motionState, running);
-  }
-
-  .lightRibbon {
-    inset: -45% -20% 15%;
-    border-radius: 50%;
-    border-bottom: 1px solid color-mix(in srgb, var(--el-color-primary) 24%, transparent);
-    box-shadow: 0 24px 70px -36px color-mix(in srgb, var(--el-color-primary) 50%, transparent);
-    transform: rotate(-16deg);
-    mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
-  }
-
-  .dotGrid {
-    background-image: radial-gradient(var(--el-text-color-placeholder) 0.7px, transparent 0.7px);
-    background-size: 24px 24px;
-    opacity: 0.3;
-    mask-image: radial-gradient(ellipse at 50% 28%, transparent 18%, #000 80%);
-  }
-
-  .flowLines {
-    width: 100%;
-    height: 100%;
-    stroke: color-mix(in srgb, var(--el-color-primary) 24%, var(--el-border-color));
-    stroke-width: 1;
-    opacity: 0.65;
-    transform: translate(var(--driftX, 0px), var(--driftY, 0px));
-    transition: transform 700ms ease-out;
-
-    .flowPulse {
-      stroke: var(--el-color-primary);
-      stroke-width: 2;
-      stroke-linecap: round;
-      stroke-dasharray: 5 95;
-      filter: drop-shadow(0 0 4px var(--el-color-primary));
-      animation: flowTravel 9s linear infinite;
-      animation-play-state: var(--motionState, running);
-    }
-
-    .connectionDots {
-      fill: var(--el-bg-color);
-      stroke: var(--el-color-primary);
-      filter: drop-shadow(0 0 3px color-mix(in srgb, var(--el-color-primary) 50%, transparent));
-    }
-  }
-
-  .sparkleField {
-    transform: translate(calc(var(--driftX, 0px) * 1.4), calc(var(--driftY, 0px) * 1.4));
-    transition: transform 900ms ease-out;
-
-    .sparkle {
-      position: absolute;
-      overflow: visible;
-      color: var(--el-color-primary);
-      fill: currentColor;
-      filter: drop-shadow(0 0 5px currentColor);
-      animation: sparkleTwinkle ease-in-out infinite;
-      animation-play-state: var(--motionState, running);
-
-      &:nth-child(3n) {
-        color: var(--sparkleColor);
-      }
-
-      circle {
-        fill: #fff;
-      }
-    }
-  }
-
-  .pointerLight {
-    background: radial-gradient(circle, var(--el-color-primary) 1.4px, transparent 1.4px) 0 0 / 24px 24px,
-      radial-gradient(
-        280px circle at var(--pointerX, 50%) var(--pointerY, 25%),
-        color-mix(in srgb, var(--sparkleColor) 24%, transparent),
-        transparent
-      );
-    mask-image: radial-gradient(240px circle at var(--pointerX, 50%) var(--pointerY, 25%), #000, transparent);
-    opacity: calc(var(--pointerOpacity, 0) * 0.4);
-    transition: opacity 400ms ease;
-  }
-
-  @media (max-width: 700px) {
-    .flowLines {
-      opacity: 0.3;
-    }
-
-    .sparkleField .sparkle:nth-child(even) {
-      display: none;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .ambientLight {
-      animation: none;
-    }
-
-    .flowLines {
-      transform: none;
-      transition: none;
-
-      .flowPulse {
-        display: none;
-        animation: none;
-      }
-    }
-
-    .sparkleField {
-      transform: none;
-      transition: none;
-
-      .sparkle {
-        animation: none;
-        opacity: 0.4;
-      }
-    }
-
-    .pointerLight {
-      display: none;
-    }
-  }
-}
-
-@keyframes ambientDrift {
-  from {
-    transform: translate(-2%, -1%) scale(1);
-  }
-  to {
-    transform: translate(2%, 2%) scale(1.06);
-  }
-}
-
-@keyframes flowTravel {
-  from {
-    stroke-dashoffset: 100;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-@keyframes sparkleTwinkle {
-  0%,
-  100% {
-    opacity: 0.15;
-    transform: scale(0.55) rotate(-12deg);
-  }
-  45% {
-    opacity: 0.95;
-    transform: scale(1.15) rotate(12deg);
-  }
-  70% {
-    opacity: 0.3;
-    transform: scale(0.75) rotate(0);
-  }
+  color: var(--el-text-color-primary);
+  opacity: 0.6;
 }
 </style>

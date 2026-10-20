@@ -1,7 +1,7 @@
 import { lstat, readFile } from "@toonflow/file";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
-import { t, translateMessage } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import conf from "@/utils/conf";
 import { configFields, configRulesSchema, declaredConfig, validateNodeConfig } from "@/utils/plugins/nodes";
 
@@ -60,7 +60,7 @@ export function validateExtConfig(rules: z.infer<typeof configRulesSchema>, conf
     if (typeof rule.field !== "string" || !Object.hasOwn(parsed, rule.field)) continue;
     const value = parsed[rule.field];
     const props = rule.props && typeof rule.props === "object" && !Array.isArray(rule.props) ? rule.props : {};
-    const label = translateMessage(typeof rule.title === "string" && rule.title.trim() ? rule.title : rule.field);
+    const label = typeof rule.title === "string" && rule.title.trim() ? rule.title : rule.field;
     let message = "";
     if (rule.type === "inputNumber") {
       if (typeof value !== "number" || !Number.isFinite(value)) message = t`${label}必须为数字`;

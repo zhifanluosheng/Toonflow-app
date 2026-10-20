@@ -28,7 +28,10 @@ async function refreshLanguageModels(previousSettings?: Record<string, unknown>)
   const index = current.findIndex(item => item?.id === provider.id && item.apiUrl === provider.apiUrl
     && item.protocol === provider.protocol && item.apiKey === provider.apiKey);
   if (index === -1) return;
-  const providers = current.map((item, itemIndex) => itemIndex === index ? { ...item, models } : item);
+  const providers = current.map((item, itemIndex) => itemIndex === index ? { ...item, models: models.map(model => {
+    const saved = Array.isArray(item.models) ? item.models.find((existing: { id?: string; reasoningEfforts?: unknown }) => existing?.id === model.id) : undefined;
+    return saved?.reasoningEfforts === undefined ? model : { ...model, reasoningEfforts: saved.reasoningEfforts };
+  }) } : item);
   conf.set("settings.customProviders", providers);
   return providers;
 }

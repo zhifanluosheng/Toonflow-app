@@ -98,7 +98,7 @@ const { nodeProps, outputs } = useNode({
 </script>
 ```
 
-`useNode(options?)` 接受 `label`、`icon`、`handles`、`outputs`，返回 `id`、`node`、`config`、`nodeProps`、`handles`、`outputs`、`nodeEvent`、`nodeTools`、`files`、`ai`、`ffmpeg`、`updateNodeInternals`。`nodeProps` 是供骨架绑定的 computed，包含标题、图标、端口和输出；`outputs` 根据默认值推导类型，并恢复当前节点保存的合法输出，只接受仍存在的 source 端口及匹配类型。文本默认值保持 `STRING`；图片节点无已保存输出时保持为空。
+`useNode(options?)` 接受 `label`、`icon`、`handles`、`outputs`，返回 `id`、`node`、`config`、`nodeProps`、`handles`、`outputs`、`nodeEvent`、`nodeTools`、`files`、`ai`、`ffmpeg`、`asr`、`updateNodeInternals`。`nodeProps` 是供骨架绑定的 computed，包含标题、图标、端口和输出；`outputs` 根据默认值推导类型，并恢复当前节点保存的合法输出，只接受仍存在的 source 端口及匹配类型。文本默认值保持 `STRING`；图片节点无已保存输出时保持为空。
 
 `files.uploadFile(file)`、`files.removeNodeFiles()` 和 `updateNodeInternals()` 已绑定当前节点，无需再次传 ID；`files` 同时提供 `getWorkspaceFiles()`、`useFileUrl()`。端口定义、具体 UI、上传校验和上传/删除互斥仍由业务节点管理。选中状态可直接使用 `node.selected`，例如绑定 `v-model:bottomVisible="node.selected"`。
 
@@ -141,6 +141,12 @@ async function compose(signal?: AbortSignal) {
 节点卸载、传入 signal 取消或 `command.kill()` 会取消请求并终止转换；开始前取消也会阻止随后启动的 FFmpeg 继续执行。FFprobe/能力查询的原生库未暴露子进程，取消仅停止等待查询结果。缺少 FFmpeg 时复用设置中的下载提示，不自动安装或重试。
 
 显式输入输出与截图路径沿用宿主的工作区、符号链接检查；原始参数、滤镜和媒体清单中的间接 I/O 仍仅供可信节点使用，**不是文件系统沙箱**。服务端原生 API 参见 `packages/toolScaffold/readme.md`。
+
+### 音频转文本
+
+在组件 setup 中取得 `const { asr } = useNode()`，再调用 `await asr.transcribe("assets/audio.wav", { lang: "zh-CN", signal })`，返回识别全文。也可以单独从 runtime 或 `@toonflow/nodes-scaffold/nodeAsr` 导入 `useNodeAsr()`；麦克风 API `createBrowserAsr` 及支持检测同时公开导出。
+
+输入为当前工作区内的音频路径，非空且不超过 100 MB；读取时固定本次工作区，节点卸载或传入的 signal 取消会终止识别并释放音频资源。底层复用 `@toonflow/asr` 的浏览器音轨识别，按音频原速处理；不支持的宿主或识别服务错误直接抛出，不回退到麦克风。API 存在不代表实际 WebView 的识别服务可用，需要目标安装包验证。
 
 ### AI 模型调用
 

@@ -6,6 +6,7 @@ import conf from "@/utils/conf";
 import { getAppOrigin } from "@/utils/mcp/control";
 import { isWithin } from "@/utils/workspace/files";
 import { getRuntimePlatform } from "@/lib/platform";
+import { thinkingLevels, type ThinkingLevel } from "@/lib/modelReasoning";
 
 export type A2aSettings = {
   enabled: boolean;
@@ -13,7 +14,7 @@ export type A2aSettings = {
   token: string;
   providerId: string;
   modelId: string;
-  thinkingLevel: "off" | "low" | "medium" | "high";
+  thinkingLevel?: ThinkingLevel;
 };
 
 let controller = new AbortController();
@@ -26,7 +27,7 @@ export function getA2aSettings(): A2aSettings {
     token: typeof value?.token === "string" ? value.token : "",
     providerId: typeof value?.providerId === "string" ? value.providerId : "",
     modelId: typeof value?.modelId === "string" ? value.modelId : "",
-    thinkingLevel: value?.thinkingLevel === "low" || value?.thinkingLevel === "medium" || value?.thinkingLevel === "high" ? value.thinkingLevel : "off",
+    thinkingLevel: thinkingLevels.includes(value.thinkingLevel as ThinkingLevel) ? value.thinkingLevel as ThinkingLevel : undefined,
   };
 }
 

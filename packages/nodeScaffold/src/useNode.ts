@@ -7,6 +7,7 @@ import { nodeTools } from "./nodeTools";
 import { useNodeFiles } from "./workspaceFiles";
 import { useNodeAi } from "./nodeAi";
 import { useNodeFfmpeg } from "./nodeFfmpeg";
+import { useNodeAsr } from "./nodeAsr";
 import { useNodePreviewReady } from "./useNodePreviewReady";
 import type { NodeDocumentContext } from "./nodeDocument";
 
@@ -55,6 +56,7 @@ export function useNode<T extends NodeOutputs = NodeOutputs>(options: NodeOption
     nodeTools,
     ai: useNodeAi(),
     ffmpeg: useNodeFfmpeg(),
+    asr: useNodeAsr(),
     files: {
       getWorkspaceFiles,
       useFileUrl,

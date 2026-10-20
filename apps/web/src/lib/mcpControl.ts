@@ -88,7 +88,8 @@ export function useMcpControl() {
         const controller = new AbortController();
         calls.set(request.callId, controller);
         connectionCalls.set(request.callId, controller);
-        const callSignal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120000)]);
+        // ACT: 长音频转写由 ASR 检测停滞与收尾超时，连接关闭和主动取消仍立即中止。
+        const callSignal = AbortSignal.any([signal, controller.signal, ...(request.name === "transcribeAudio" ? [] : [AbortSignal.timeout(120000)])]);
         let result: unknown;
         let error: string | undefined;
         try {

@@ -16,7 +16,7 @@ export default class entryAbility extends UIAbility {
   }
 
   onDestroy(): void {
-    // ACT: Bun 随 Ability 运行；需要后台长任务时再接入鸿蒙后台任务机制。
+    // ACT: 本地服务随 Ability 运行；需要后台长任务时再接入鸿蒙后台任务机制。
     runtime.stop();
   }
 }

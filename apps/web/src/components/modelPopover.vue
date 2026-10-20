@@ -10,11 +10,13 @@
       popperClass="agentModelPopover"
       :popperStyle="{ padding: '20px', maxWidth: 'calc(100vw - 24px)' }">
       <template #reference>
-        <el-button class="modelButton" text :disabled="disabled" aria-label="模型与推理设置">
+        <el-button class="modelButton" text :disabled="disabled" aria-label="模型与思考强度设置">
           <modelIcon v-if="selectedModelChoice" :model="selectedModelChoice.modelId" :size="14" />
           <span class="modelName">{{ selectedModelChoice?.label ?? "选择模型" }}</span>
-          ·
-          <span class="reasoningLabel">{{ reasoningLabel }}</span>
+          <template v-if="reasoningLevels.length">
+            ·
+            <span class="reasoningLabel">{{ reasoningLabel }}</span>
+          </template>
           <component :is="visible ? IconChevronUp : IconChevronDown" :size="14" aria-hidden="true" />
         </el-button>
       </template>
@@ -32,8 +34,16 @@
             </el-option-group>
           </el-select>
         </el-form-item>
-        <el-form-item label="推理等级">
-          <el-segmented v-model="reasoningEffort" :options="reasoningOptions" :disabled="disabled" block aria-label="推理等级" />
+        <el-form-item v-if="reasoningLevels.length" label="思考强度">
+          <div class="reasoningSettings">
+            <div class="reasoningGrid" role="radiogroup" aria-label="思考强度" :aria-describedby="`${reasoningId}Hint`" :style="{ gridTemplateColumns: `repeat(${reasoningColumns}, minmax(0, 1fr))` }">
+              <label v-for="option in reasoningOptions" :key="option.value" class="reasoningOption">
+                <input v-model="reasoningEffort" type="radio" :name="reasoningId" :value="option.value" :disabled="disabled" />
+                <span class="reasoningOptionLabel">{{ option.label }}</span>
+              </label>
+            </div>
+            <div :id="`${reasoningId}Hint`" class="reasoningHint">默认由模型决定</div>
+          </div>
         </el-form-item>
       </el-form>
     </el-popover>
@@ -41,27 +51,30 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, useId, watch } from "vue";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-vue";
 import { modelIcon } from "@toonflow/model-icons";
+import type { ThinkingLevel } from "@toonflow/server/modelReasoning";
 import { customProviders, modelChoices } from "@/stores/settings";
 
 const selectedModel = defineModel<string>({ default: "" });
 const reasoningEffort = defineModel<string>("reasoningEffort", { default: "" });
 const props = withDefaults(defineProps<{ active?: boolean; disabled?: boolean }>(), { active: true, disabled: false });
 const visible = ref(false);
-const reasoningOptions = [
-  { label: "默认", value: "" },
-  { label: "低", value: "low" },
-  { label: "中", value: "medium" },
-  { label: "高", value: "high" },
-];
+const reasoningId = useId();
+const reasoningLabels: Record<ThinkingLevel, string> = { off: "关闭", minimal: "最小", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最高" };
 const modelGroups = computed(() => customProviders.value.toSorted((left, right) => Number(right.id === "tfRouter") - Number(left.id === "tfRouter")));
 const selectedModelChoice = computed(() => modelChoices.value.find(item => item.value === selectedModel.value));
-const reasoningLabel = computed(() => reasoningOptions.find(item => item.value === reasoningEffort.value)?.label ?? "默认");
+const reasoningLevels = computed(() => selectedModelChoice.value?.reasoningLevels ?? []);
+const reasoningOptions = computed(() => [{ label: "默认", value: "" }, ...reasoningLevels.value.map(value => ({ label: reasoningLabels[value], value }))]);
+const reasoningColumns = computed(() => Math.min(4, reasoningOptions.value.length > 4 ? Math.ceil(reasoningOptions.value.length / 2) : reasoningOptions.value.length));
+const reasoningLabel = computed(() => reasoningOptions.value.find(item => item.value === reasoningEffort.value)?.label ?? "默认");
 watch(modelChoices, items => {
   if (!selectedModel.value) selectedModel.value = items[0]?.value ?? "";
 }, { immediate: true });
+watch([() => selectedModelChoice.value?.reasoningLevels, reasoningEffort], ([levels, effort]) => {
+  if (levels && effort && !levels.includes(effort as ThinkingLevel)) reasoningEffort.value = "";
+}, { immediate: true, flush: "post" });
 watch(() => !props.active || props.disabled, close => { if (close) visible.value = false; });
 </script>
 
@@ -105,23 +118,78 @@ watch(() => !props.active || props.disabled, close => { if (close) visible.value
 .agentModelPopover {
   .modelOptions {
     .el-form-item {
-      margin-bottom: 24px;
+      margin-bottom: 20px;
 
       &:last-child {
         margin-bottom: 0;
       }
       .el-form-item__label {
-        margin-bottom: 10px;
+        margin-bottom: 8px;
         font-weight: 500;
         color: var(--el-text-color-primary);
       }
-      .el-segmented {
+      .el-select {
+        width: 100%;
+      }
+      .reasoningSettings {
         width: 100%;
 
-        @media (max-width: 360px) {
-          .el-segmented__item {
-            padding-inline: 6px;
+        .reasoningGrid {
+          display: grid;
+          gap: 6px;
+
+          .reasoningOption {
+            position: relative;
+            min-width: 0;
+
+            input {
+              position: absolute;
+              width: 1px;
+              height: 1px;
+              overflow: hidden;
+              clip-path: inset(50%);
+
+              &:checked + .reasoningOptionLabel {
+                border-color: var(--el-color-primary-light-5);
+                background: var(--el-color-primary-light-9);
+                color: var(--el-color-primary);
+                font-weight: 600;
+              }
+              &:focus-visible + .reasoningOptionLabel {
+                outline: 2px solid var(--el-color-primary);
+                outline-offset: 2px;
+              }
+              &:disabled + .reasoningOptionLabel {
+                opacity: .5;
+                cursor: not-allowed;
+              }
+            }
+            .reasoningOptionLabel {
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 32px;
+              padding: 4px 8px;
+              border: 1px solid var(--el-border-color-lighter);
+              border-radius: var(--el-border-radius-base);
+              background: var(--el-fill-color-light);
+              color: var(--el-text-color-regular);
+              font-size: 12px;
+              line-height: 20px;
+              cursor: pointer;
+              transition: background-color .15s, border-color .15s, color .15s;
+            }
+            &:hover input:not(:disabled) + .reasoningOptionLabel {
+              border-color: var(--el-color-primary-light-5);
+              color: var(--el-color-primary);
+            }
           }
+        }
+        .reasoningHint {
+          margin-top: 8px;
+          color: var(--el-text-color-secondary);
+          font-size: 12px;
+          line-height: 18px;
         }
       }
     }

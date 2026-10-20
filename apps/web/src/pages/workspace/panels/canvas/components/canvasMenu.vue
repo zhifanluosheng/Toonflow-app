@@ -1,6 +1,6 @@
 <template>
   <panel class="canvasMenuPanel" position="top-left">
-    <el-card class="canvasMenu" shadow="never" :bodyStyle="{ padding: '3px 6px' }">
+    <el-card class="canvasMenu" shadow="never" :bodyStyle="{ padding: '2px 4px' }">
       <div class="menuContent">
         <el-input v-model="projectNameDraft" class="workspaceNameInput" :style="{ '--workspaceName': JSON.stringify(projectNameDraft || ' ') }" size="small" :title="directory" :disabled="!workspaceStore.project" aria-label="项目名称"
           @keydown.stop @keydown.enter="saveProjectName" @keydown.esc.prevent="projectNameDraft = workspaceName" @blur="saveProjectName" />
@@ -39,9 +39,9 @@
     </el-card>
     <div class="menuExtension"><slot /></div>
   </panel>
-  <panel class="balanceMenuPanel" position="top-right">
+  <panel v-if="visibleProviderBalances.length" class="balanceMenuPanel" position="top-right">
     <div class="balanceList" tabindex="0" aria-label="供应商余额">
-      <el-card v-for="item in providerBalances" :key="item.id" class="balanceCard" shadow="never" :bodyStyle="{ padding: '3px 6px' }">
+      <el-card v-for="item in visibleProviderBalances" :key="item.id" class="balanceCard" shadow="never" :bodyStyle="{ padding: '2px 4px' }">
         <el-popover v-if="item.id === 'tfRouter'" :visible="balanceVisible" @update:visible="value => { if (!rechargeVisible) balanceVisible = value; }" trigger="click" placement="bottom-end" :width="360" :showArrow="false">
           <template #reference>
             <el-button class="balanceTrigger" text :aria-busy="item.loading" :title="item.error || 'TF-Router 剩余可用余额'" aria-label="TF-Router 余额与充值">
@@ -102,6 +102,7 @@ const workspaceStore = useWorkspaceStore();
 const balanceVisible = ref(false);
 const rechargeVisible = ref(false);
 const balanceFormat = computed(() => new Intl.NumberFormat(locale.value, { maximumFractionDigits: 6 }));
+const visibleProviderBalances = computed(() => providerBalances.value.filter(item => item.id !== "tfRouter" || (item.balance && !item.error)));
 const workspaceName = computed(() => workspaceStore.project?.name || "未命名工作区");
 const projectNameDraft = ref("");
 watch([() => workspaceStore.project?.directory, workspaceName], () => {
@@ -824,7 +825,7 @@ defineExpose({ getCanvases, peekCanvases, initialized, addCanvas, switchCanvas, 
 
   .balanceList {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     max-width: 520px;
     overflow-x: auto;
     scrollbar-width: thin;
@@ -834,10 +835,10 @@ defineExpose({ getCanvases, peekCanvases, initialized, addCanvas, switchCanvas, 
       font-variant-numeric: tabular-nums;
       .providerLabel { color: var(--el-text-color-secondary); font-size: 12px; }
       .balanceTrigger {
-        height: 32px;
-        padding: 0 4px;
+        height: 28px;
+        padding: 0 3px;
         font-size: 13px;
-        :deep(> span) { display: flex; align-items: center; gap: 6px; }
+        :deep(> span) { display: flex; align-items: center; gap: 4px; }
       }
     }
   }
@@ -845,7 +846,7 @@ defineExpose({ getCanvases, peekCanvases, initialized, addCanvas, switchCanvas, 
 
 @container canvasWorkspace (max-width: 1040px) {
   .balanceMenuPanel.vue-flow__panel {
-    top: 56px;
+    top: 50px;
     max-width: calc(100% - 30px);
   }
 }
@@ -922,19 +923,19 @@ defineExpose({ getCanvases, peekCanvases, initialized, addCanvas, switchCanvas, 
 }
 
 .canvasMenu {
-  margin-left: 90px;
+  margin-left: 76px;
   min-width: 0;
 
   .menuContent {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
 
-    .el-divider { margin: 0 4px; }
+    .el-divider { margin: 0 3px; }
 
     .workspaceNameInput {
       width: auto;
-      height: 32px;
+      height: 28px;
       min-width: 2em;
       max-width: 180px;
       font-size: 13px;
@@ -949,6 +950,7 @@ defineExpose({ getCanvases, peekCanvases, initialized, addCanvas, switchCanvas, 
       :deep(.el-input__wrapper) {
         position: absolute;
         inset: 0;
+        background: transparent;
         box-shadow: none;
       }
 
@@ -961,10 +963,10 @@ defineExpose({ getCanvases, peekCanvases, initialized, addCanvas, switchCanvas, 
 
     .canvasTrigger {
       min-width: 0;
-      height: 32px;
-      padding: 0 4px;
+      height: 28px;
+      padding: 0 3px;
       font-size: 13px;
-      :deep(> span) { display: flex; align-items: center; gap: 6px; min-width: 0; }
+      :deep(> span) { display: flex; align-items: center; gap: 4px; min-width: 0; }
       span { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
     }
 

@@ -10,12 +10,14 @@ import {
   detectSupportedImageMimeTypeFromFile, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { CanvasContext, QuestionContext, ToolContext, ToolFiles } from "@toonflow/tools-scaffold/runtime";
+import { asrRequestSchema } from "@toonflow/tools-scaffold/runtime";
 import conf from "@/utils/conf";
 import { isWithin, resolveWorkspacePath, writeWorkspaceFile, renameWorkspaceFile, lockWorkspaceFiles, protectWorkspaceRoot } from "@/utils/workspace/files";
 import { listTools, loadTool, validateToolConfig } from "@/utils/plugins/tools";
 import { createSkillContext } from "@/agent/skills";
 import { createAssetContext } from "@/agent/assets";
 import { readDocument } from "@/utils/documents";
+import { createMcpAgentTools } from "@/utils/mcp/servers";
 
 export function createAgentToolContext(cwd: string, config: Record<string, unknown> = {}, canvas?: CanvasContext, question?: QuestionContext, workspaceAvailable = true): ToolContext {
   const skillsDirectory = join(dirname(conf.path), "skills");
@@ -74,6 +76,19 @@ export function createAgentToolContext(cwd: string, config: Record<string, unkno
     cwd, config, files, resolvePath, writeFile: files.writeFile, canvas, question,
     skills: workspaceAvailable ? createSkillContext(cwd) : undefined, assets: workspaceAvailable ? createAssetContext(cwd) : undefined,
     browser: createBrowserContext(cwd),
+    asr: {
+      async transcribe(path, options = {}) {
+        requireWorkspace();
+        options.signal?.throwIfAborted();
+        if (!canvas) throw new Error("当前对话未连接画布，无法使用浏览器语音识别");
+        const source = await resolvePath(path);
+        const args = asrRequestSchema.parse({ path: relative(cwd, source).replaceAll("\\", "/"), lang: options.lang });
+        options.signal?.throwIfAborted();
+        const result = await canvas.call({ name: "transcribeAudio", args }, options.signal);
+        if (typeof result !== "string") throw new Error("语音识别返回了无效的文本");
+        return result;
+      },
+    },
     ffmpeg: signal => { requireWorkspace(); return createWorkspaceFfmpeg(cwd, signal); },
     media: workspaceAvailable ? {
       listModels: listMediaModels,
@@ -100,7 +115,7 @@ export function createAgentToolContext(cwd: string, config: Record<string, unkno
   };
 }
 
-export async function createAgentTools(cwd: string, canvas?: CanvasContext, question?: QuestionContext): Promise<ToolDefinition[]> {
+export async function createAgentTools(cwd: string, canvas?: CanvasContext, question?: QuestionContext, includeMcp = true): Promise<ToolDefinition[]> {
   const tools: ToolDefinition[] = [];
   const names = new Set<string>();
   const context = createAgentToolContext(cwd, {}, canvas, question);
@@ -123,5 +138,6 @@ export async function createAgentTools(cwd: string, canvas?: CanvasContext, ques
       });
     }
   }
+  if (includeMcp) tools.push(...await createMcpAgentTools());
   return tools;
 }

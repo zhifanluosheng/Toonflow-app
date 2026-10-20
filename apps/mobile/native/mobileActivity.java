@@ -49,6 +49,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -91,10 +92,11 @@ public class mobileActivity extends Activity {
   private ProgressBar progressView;
   private ValueCallback<Uri[]> fileCallback;
   private Uri pendingSave;
-  private Object cameraRequest;
-  private Uri cameraOrigin;
-  private ValueCallback<Boolean> cameraCallback;
-  private boolean cameraPermissionPending;
+  private Object mediaRequest;
+  private Uri mediaOrigin;
+  private ValueCallback<Boolean> mediaCallback;
+  private String[] mediaPermissions;
+  private boolean mediaPermissionPending;
   private boolean failed;
   private String browserStage = "waiting";
   private String systemMissing = "";
@@ -155,14 +157,15 @@ public class mobileActivity extends Activity {
       webView.setWebChromeClient(new WebChromeClient() {
         @Override
         public void onPermissionRequest(PermissionRequest request) {
-          requestCamera(request, request.getOrigin(), request.getResources(), allowed -> {
-            if (allowed) request.grant(new String[] { PermissionRequest.RESOURCE_VIDEO_CAPTURE });
+          String[] resources = request.getResources();
+          requestMedia(request, request.getOrigin(), resources, allowed -> {
+            if (allowed) request.grant(resources);
             else request.deny();
           });
         }
 
         @Override
-        public void onPermissionRequestCanceled(PermissionRequest request) { cancelCamera(request); }
+        public void onPermissionRequestCanceled(PermissionRequest request) { cancelMedia(request); }
 
         @Override
         public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
@@ -263,55 +266,70 @@ public class mobileActivity extends Activity {
     return url != null && isLocalOrigin(Uri.parse(url));
   }
 
-  private void requestCamera(Object request, Uri origin, String[] resources, ValueCallback<Boolean> callback) {
-    boolean video = false;
+  private void requestMedia(Object request, Uri origin, String[] resources, ValueCallback<Boolean> callback) {
+    List<String> permissions = new ArrayList<>();
     if (resources != null) for (String resource : resources) {
-      if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) video = true;
+      if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) permissions.add(Manifest.permission.CAMERA);
+      else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) permissions.add(Manifest.permission.RECORD_AUDIO);
+      else {
+        callback.onReceiveValue(false);
+        return;
+      }
     }
-    if (!video || !isLocalOrigin(origin) || !isLocalPage() || cameraRequest != null || cameraPermissionPending) {
+    if (permissions.isEmpty() || !isLocalOrigin(origin) || !isLocalPage() || mediaRequest != null || mediaPermissionPending) {
       callback.onReceiveValue(false);
       return;
     }
-    if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+    String[] missing = permissions.stream().filter(permission -> checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED).distinct().toArray(String[]::new);
+    if (missing.length == 0) {
       callback.onReceiveValue(true);
       return;
     }
-    cameraRequest = request;
-    cameraOrigin = origin;
-    cameraCallback = callback;
-    cameraPermissionPending = true;
+    mediaRequest = request;
+    mediaOrigin = origin;
+    mediaCallback = callback;
+    mediaPermissions = permissions.toArray(new String[0]);
+    mediaPermissionPending = true;
     try {
-      requestPermissions(new String[] { Manifest.permission.CAMERA }, 3);
+      requestPermissions(missing, 3);
     } catch (RuntimeException error) {
-      cameraPermissionPending = false;
-      finishCamera(false);
-      Log.w("ToonflowMobile", "Unable to request camera permission", error);
+      mediaPermissionPending = false;
+      finishMedia(false);
+      Log.w("ToonflowMobile", "Unable to request media permission", error);
     }
   }
 
-  private void cancelCamera(Object request) {
-    if (cameraRequest != request) return;
-    cameraRequest = null;
-    cameraOrigin = null;
-    cameraCallback = null;
+  private void cancelMedia(Object request) {
+    if (mediaRequest != request) return;
+    mediaRequest = null;
+    mediaOrigin = null;
+    mediaCallback = null;
+    mediaPermissions = null;
   }
 
-  private void finishCamera(boolean allowed) {
-    ValueCallback<Boolean> callback = cameraCallback;
-    Uri origin = cameraOrigin;
-    cameraRequest = null;
-    cameraOrigin = null;
-    cameraCallback = null;
-    if (callback != null) callback.onReceiveValue(allowed && isLocalOrigin(origin) && isLocalPage()
-      && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED);
+  private void finishMedia(boolean allowed) {
+    ValueCallback<Boolean> callback = mediaCallback;
+    Uri origin = mediaOrigin;
+    String[] permissions = mediaPermissions;
+    mediaRequest = null;
+    mediaOrigin = null;
+    mediaCallback = null;
+    mediaPermissions = null;
+    boolean granted = allowed && isLocalOrigin(origin) && isLocalPage() && permissions != null;
+    if (permissions != null) for (String permission : permissions) {
+      if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) granted = false;
+    }
+    if (callback != null) callback.onReceiveValue(granted);
   }
 
   @Override
   public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults);
     if (requestCode != 3) return;
-    cameraPermissionPending = false;
-    finishCamera(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
+    mediaPermissionPending = false;
+    boolean granted = grantResults.length > 0;
+    for (int result : grantResults) if (result != PackageManager.PERMISSION_GRANTED) granted = false;
+    finishMedia(granted);
   }
 
   private void restartApp() {
@@ -322,7 +340,7 @@ public class mobileActivity extends Activity {
       process = bunProcess;
       stopBun();
     }
-    finishCamera(false);
+    finishMedia(false);
     mainHandler.removeCallbacks(browserTimeout);
     browserStage = "restarting";
     statusView.setVisibility(View.VISIBLE);
@@ -442,7 +460,7 @@ public class mobileActivity extends Activity {
         @Override
         public void onLocationChange(GeckoSession session, String url, List<GeckoSession.PermissionDelegate.ContentPermission> permissions, Boolean gesture) {
           geckoUrl = url;
-          if (!isLocalOrigin(Uri.parse(url))) finishCamera(false);
+          if (!isLocalOrigin(Uri.parse(url))) finishMedia(false);
         }
 
         @Override
@@ -486,11 +504,16 @@ public class mobileActivity extends Activity {
       geckoSession.setPermissionDelegate(new GeckoSession.PermissionDelegate() {
         @Override
         public void onAndroidPermissionsRequest(GeckoSession session, String[] permissions, Callback callback) {
-          for (String permission : permissions) if (!Manifest.permission.CAMERA.equals(permission)) {
-            callback.reject();
-            return;
+          List<String> resources = new ArrayList<>();
+          for (String permission : permissions) {
+            if (Manifest.permission.CAMERA.equals(permission)) resources.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE);
+            else if (Manifest.permission.RECORD_AUDIO.equals(permission)) resources.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE);
+            else {
+              callback.reject();
+              return;
+            }
           }
-          requestCamera(callback, geckoUrl == null ? null : Uri.parse(geckoUrl), new String[] { PermissionRequest.RESOURCE_VIDEO_CAPTURE }, allowed -> {
+          requestMedia(callback, geckoUrl == null ? null : Uri.parse(geckoUrl), resources.toArray(new String[0]), allowed -> {
             if (allowed) callback.grant();
             else callback.reject();
           });
@@ -499,14 +522,20 @@ public class mobileActivity extends Activity {
         @Override
         public void onMediaPermissionRequest(GeckoSession session, String url, MediaSource[] video, MediaSource[] audio, MediaCallback callback) {
           MediaSource camera = null;
+          MediaSource microphone = null;
           if (video != null) for (MediaSource source : video) if (source.source == MediaSource.SOURCE_CAMERA) { camera = source; break; }
-          if (camera == null || audio != null && audio.length > 0) {
+          if (audio != null) for (MediaSource source : audio) if (source.source == MediaSource.SOURCE_MICROPHONE) { microphone = source; break; }
+          if (video != null && camera == null || audio != null && microphone == null || camera == null && microphone == null) {
             callback.reject();
             return;
           }
-          MediaSource selected = camera;
-          requestCamera(callback, Uri.parse(url), new String[] { PermissionRequest.RESOURCE_VIDEO_CAPTURE }, allowed -> {
-            if (allowed) callback.grant(selected, null);
+          List<String> resources = new ArrayList<>();
+          if (camera != null) resources.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE);
+          if (microphone != null) resources.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE);
+          MediaSource selectedVideo = camera;
+          MediaSource selectedAudio = microphone;
+          requestMedia(callback, Uri.parse(url), resources.toArray(new String[0]), allowed -> {
+            if (allowed) callback.grant(selectedVideo, selectedAudio);
             else callback.reject();
           });
         }
@@ -953,8 +982,8 @@ public class mobileActivity extends Activity {
   @Override
   protected void onDestroy() {
     // ACT: 当前版本仅随 Activity 运行；后台长任务需另行接入前台服务。
-    finishCamera(false);
-    cameraPermissionPending = false;
+    finishMedia(false);
+    mediaPermissionPending = false;
     if (fileCallback != null) fileCallback.onReceiveValue(null);
     fileCallback = null;
     if (pendingSave != null) finishSave(pendingSave, null, null);

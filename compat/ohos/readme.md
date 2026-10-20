@@ -1,8 +1,10 @@
 # Toonflow OHOS
 
-独立鸿蒙兼容构建，复用 `apps/mobile/src/server.ts`、完整网页与内置插件。ArkTS UIAbility/ArkWeb 加载应用内 Bun 在随机 localhost 端口提供的页面；C++ NAPI 只负责启动和回收 Bun。不会启动电脑上的服务来冒充本机后端。
+独立鸿蒙兼容构建，复用 `apps/mobile/src/server.ts`、完整网页与内置插件。ArkTS UIAbility/ArkWeb 加载应用内服务在随机 localhost 端口提供的页面；服务由 C++ 桥嵌入 Node 共享库运行。构建时只转换 OHOS 所需的 Bun 接口，其他平台沿用 Bun。
 
-当前固定运行时为 [springmin/bun v1.4.0](https://github.com/springmin/bun/releases/tag/v1.4.0) 的预签名 **OHOS ARM64** ELF，SHA256 为 `f1382157493f24e7876171a8dc5a7453564d8bf379adcd67c646988ff9105cf7`。该二进制对应源码为 [0f78632c38a2280f5f4f29f9f76e30c242d3d34a](https://github.com/springmin/bun/tree/0f78632c38a2280f5f4f29f9f76e30c242d3d34a)，不是同名 Git tag 的旧主线。`bun-v1.4.2-ohos` 发布页目前没有二进制。许可原文见 [bunLicense.md](bunLicense.md)，随 HAP 一起分发。
+当前运行时为 [electerm/ohos-node-shared Node 24.2.0](https://github.com/electerm/ohos-node-shared/releases/tag/ohos-node-shared-v24.2.0) 的 **OHOS ARM64** 共享库，原始 SHA256 为 `3019bf5f9a279d98a87606fc13c53b0e797b6a50cf174f8a1243d880c71151a1`。构建仅将 ELF 的 SONAME 规范为 HAP 原生库名称 `libnode.so`，使用同版本官方头文件，并随包分发 Node 许可。
+
+第三方 Bun 已有 OHOS 移植，例如 [springmin/bun](https://github.com/springmin/bun) 和 [ohos-npm-ports/bun](https://github.com/ohos-npm-ports/ohos-npm-ports/tree/main/ports/bun/1.4.2)。2026-10-15 在 API 17 云手机的普通 HAP 内实测，沙箱文件及安装目录中的 Bun 可执行文件均被拒绝执行；终端环境支持不能证明 HAP 内可启动。Node 共享库路线已在该设备启动本地服务并显示工作区画布，具体功能验证范围见下文。
 
 ## 构建
 
@@ -17,7 +19,7 @@ bun run --cwd compat/ohos typecheck
 bun run --cwd compat/ohos build
 ```
 
-`setup` 下载并校验 Bun，然后用 DevEco 自带 OHPM 链接项目自己的 NAPI 类型声明。`build` 复用 `build:server` 构建前后端及插件，然后生成标准 Hvigor 工程、编译原生桥和 ArkTS、打包 HAP。SDK 强制要求的 `build-profile.json5`、`CMakeLists.txt` 等文件只生成到 `build/ohos/project`。构建不会隐式运行 `setup`。
+`setup` 下载并校验 Node 共享库与头文件，然后用 DevEco 自带 OHPM 链接项目自己的 NAPI 类型声明。`build` 复用 `build:server` 构建前后端及插件，再为 OHOS 生成 Node 服务包、标准 Hvigor 工程、原生桥和 ArkTS，打包 HAP。SDK 强制要求的 `build-profile.json5`、`CMakeLists.txt` 等文件只生成到 `build/ohos/project`。构建不会隐式运行 `setup`。
 
 默认产物为 `build/ohos/toonflow-2.0.0-ohos-arm64-v8a-unsigned.hap`，文件名随项目版本变化。程序资源在 `build/ohos/payload`；可用 DevEco Studio 打开 `build/ohos/project` 调试和配置签名。
 
@@ -27,11 +29,12 @@ bun run --cwd compat/ohos build
 | --- | --- |
 | `DEVECO_HOME` | DevEco Studio 安装目录，默认如上 |
 | `DEVECO_SDK_HOME` | SDK 根目录，默认 `DEVECO_HOME/sdk` |
-| `ohosBunPath` | 已构建并签名的 OHOS Bun ELF 的绝对路径；覆盖默认运行时 |
-| `ohosArch` | 默认 `arm64-v8a`；只有另备兼容 OHOS 的 x86_64 ELF 才能选 `x86_64` |
+| `ohosNodePath` | OHOS Node 共享库绝对路径；覆盖默认运行时 |
+| `ohosNodeHeaders` | 与共享库同版本的 Node `include/node` 目录 |
+| `ohosArch` | 默认 `arm64-v8a`；只有另备兼容 OHOS 的 x86_64 共享库才能选 `x86_64` |
 | `ohosSigningConfig` | 一个完整 DevEco `signingConfigs` 配置对象的 JSON 文件路径 |
 
-构建会校验 ELF 架构。Linux、Android Bun 与 OHOS Bun 不可互换；x86_64 模拟器不能运行当前发布的 ARM64 Bun。
+构建会校验 ELF 架构和共享库类型，拒绝带程序解释器的命令行可执行文件。Linux、Android 与 OHOS 原生库不可互换；x86_64 模拟器不能运行 ARM64 库。
 
 ## 签名和安装
 
@@ -56,7 +59,9 @@ $hdc = Join-Path $env:DEVECO_HOME 'sdk\default\openharmony\toolchains\hdc.exe'
 
 - 程序更新使用 `filesDir/appNext → app` 与 `appPrevious` 回滚，数据单独存于 `filesDir/data`。覆盖安装替换程序资源，不覆盖设置和工作区；卸载会清除应用数据。
 - 沿用移动端随机端口、一次启动令牌及 HttpOnly Cookie 鉴权。原生桥仅接受本机同源 `toonflow://save` 和重启请求，外部网页在系统浏览器打开。
-- 首次进入网页前执行现有浏览器能力预检；系统 ArkWeb 不满足要求时显示错误。OHOS 不含 Android GeckoView。
+- 每个本机页面的脚本执行前按需补齐 `Map.groupBy`、`URL.canParse`、`Promise.withResolvers`、`AbortSignal.any`，只注入当前随机端口的本机来源。首次进入网页仍执行原有浏览器能力预检；其余 ArkWeb 能力不满足要求时显示错误。OHOS 不含 Android GeckoView。
 - 保留横屏、全屏、文件上传和系统文件保存；设备互联可手输配对码。相机授权和拍摄扫码尚未接入。
-- Bun 随 Ability 生命周期运行，没有后台长任务保证。`TOONFLOW_PLATFORM=ohos` 用于避免把该 Bun 报告的 `linux` 误当作 Linux FFmpeg 支持。
-- 必须在 ARM64 设备上继续验证 HAP 签名安装、应用沙箱内 `posix_spawn`/ELF 执行/JIT、Bun FFI 与原子文件创建、ArkWeb 实际渲染、系统文件选择及重启持久化。上游终端环境的 Bun 支持不能替代普通 HarmonyOS 手机 HAP 的验证。
+- 本地服务随 Ability 生命周期运行，没有后台长任务保证。`TOONFLOW_PLATFORM=ohos` 用于区分鸿蒙与 Linux 功能支持；外部 CLI、FFmpeg 和 MCP stdio 仍受手机应用执行权限限制。
+- Node 使用 `--jitless`，通过已安装的 `node-fetch` 负责 HTTP 传输、Undici 提供 Web API，避开 Node 24.2 内置的 WASM HTTP 解析器。图片处理接入鸿蒙 ImageKit，支持尺寸读取、`fill` 缩放及 PNG/JPEG/WebP 编码；供应商脚本和其他 Bun 接口仍需分别验证，不能视为完整 Bun 兼容。
+- 2026-10-15 已在 OpenHarmony 5.0.5.316、API 17、ARM64 云手机验证签名安装、本地服务启动、快速开始/首页/工作区画布渲染与手机工作目录创建。现有供应商调试入口也已走通 PNG/JPEG/WebP 尺寸读取、300×300 缩放与编码；使用空 API Key 在发送供应商请求前退出，未发起付费生成。输出图片视觉效果、系统文件上传/导出以及完整生成流程尚未验收。
+- 该设备已验证文件独占创建、覆盖保存、读取、改名和两种同名冲突保护。通过界面创建的图片生成节点已保存到画布；覆盖安装最终 HAP 并冷启动后，画布与两份验证文件的 SHA256 均保持一致，项目列表也已恢复。

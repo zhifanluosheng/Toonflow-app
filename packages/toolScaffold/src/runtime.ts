@@ -7,6 +7,12 @@ import { z } from "zod";
 export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 export type { FfmpegFactory, FfmpegCommand, FfprobeData } from "@toonflow/ffmpeg/types";
 
+export const asrRequestSchema = z.strictObject({
+  path: z.string().min(1).max(4096).refine(path => !/^(?:[\\/]|[a-z][a-z\d+.-]*:)/i.test(path)
+    && !path.replaceAll("\\", "/").split("/").includes(".."), "音频路径必须位于工作区内"),
+  lang: z.string().min(1).max(100).optional(),
+});
+
 export const toolNameSchema = z.string().max(96).regex(/^[a-z][a-zA-Z0-9]*$/);
 export const toolMetadataSchema = z.object({
   name: toolNameSchema,
@@ -191,6 +197,9 @@ export interface ToolFiles {
 }
 
 export interface ToolContext {
+  asr: {
+    transcribe(path: string, options?: { lang?: string; signal?: AbortSignal }): Promise<string>;
+  };
   assets?: { execute: ToolDefinition["execute"] };
   browser?: {
     execute(sessionId: string, args: Record<string, unknown>, config: Record<string, unknown>, signal?: AbortSignal,

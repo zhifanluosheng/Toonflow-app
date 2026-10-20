@@ -59,7 +59,7 @@ const listing = ref<DirectoryListing>();
 const browseError = ref("");
 let finishSelection: ((directory: string | null) => void) | undefined;
 onBeforeUnmount(() => finishSelection?.(null));
-defineExpose({ chooseDirectory });
+defineExpose({ chooseDirectory, selecting });
 
 async function chooseDirectory(): Promise<string | null> {
   if (selecting.value || loading.value || props.disabled) return null;

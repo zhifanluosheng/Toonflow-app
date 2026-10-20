@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { NodeHandle } from "@toonflow/nodes-scaffold/connection";
 import { customProviders, settings } from "@/stores/settings";
 
 type TfRequestOptions = { apiKey?: string; signal?: AbortSignal };
@@ -8,6 +9,42 @@ type TfOrder = { orderNumber: string; status: string | number };
 export type TfRechargeSku = { id: number; price: number; integral: number; describe: string };
 export type TfSponsor = { id: number; name: string; logoUrl: string; readme: string };
 type TfResponse<T> = { code: number; data: T; message?: string };
+
+export type TfExploreCategory = { id: string; name: string };
+export type TfExploreProject = {
+  id: string;
+  title: string;
+  coverUrl: string;
+  author: { id: string; name: string; avatarUrl?: string };
+  likeCount: number;
+  collectionCount: number;
+  liked: boolean;
+  collected: boolean;
+};
+export type TfExploreParams = { cursor?: string; limit: number; categoryId?: string; searchKeyword?: string };
+export type TfExplorePage = { categories: TfExploreCategory[]; list: TfExploreProject[]; nextCursor: string | null };
+export type TfExploreDetail = TfExploreProject & { description: string; videoUrl: string; shareUrl: string };
+export type TfExploreReaction = Pick<TfExploreProject, "liked" | "collected" | "likeCount" | "collectionCount">;
+export type TfExploreProcess = {
+  canvases: {
+    id: string;
+    name: string;
+    nodes: {
+      id: string;
+      label: string;
+      position: { x: number; y: number };
+      width?: number;
+      height?: number;
+      parentNode?: string;
+      kind?: "group";
+      handles?: NodeHandle[];
+      text?: string;
+      prompt?: string;
+      media?: { type: "image" | "video" | "audio"; url: string };
+    }[];
+    edges: { id: string; source: string; target: string; sourceHandle?: string; targetHandle?: string }[];
+  }[];
+};
 
 export type TfPayParams = {
   comboId: number;
@@ -68,7 +105,142 @@ function responseData<T>(response: TfResponse<T>, fallback = "TF-Router 请求�
   return response.data;
 }
 
+function exploreOptions(options?: Pick<TfRequestOptions, "signal">) {
+  return getTfApiKey() ? requestOptions(options) : { signal: options?.signal, timeout: 20000 };
+}
+
+function isExploreUrl(value: unknown, allowEmpty = false): value is string {
+  if (allowEmpty && value === "") return true;
+  if (typeof value !== "string" || !URL.canParse(value)) return false;
+  const url = new URL(value);
+  return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password;
+}
+
+function validateExploreId(id: string) {
+  if (typeof id !== "string" || !id.trim() || id.length > 200) throw new Error("探索项目 ID 无效");
+}
+
+function validateExploreReaction(value: TfExploreReaction) {
+  if (!value || typeof value.liked !== "boolean" || typeof value.collected !== "boolean"
+    || ![value.likeCount, value.collectionCount].every(count => Number.isSafeInteger(count) && count >= 0)) throw new Error("作品互动响应格式不正确");
+}
+
+function validateExploreProject(project: TfExploreProject) {
+  validateExploreId(project?.id);
+  validateExploreReaction(project);
+  if (typeof project.title !== "string" || !isExploreUrl(project.coverUrl, true)
+    || !project.author || typeof project.author.id !== "string" || typeof project.author.name !== "string"
+    || (project.author.avatarUrl !== undefined && !isExploreUrl(project.author.avatarUrl, true))) throw new Error("探索项目响应格式不正确");
+}
+
 export default {
+  // TF 探索接口统一返回 { code: 200, data, message? }；浏览接口可匿名，提供 Key 时附带用户互动状态。
+  // 每页同时返回完整 categories 和筛选后的 list；分类不随搜索或分类筛选缩减。
+  // cursor 首次省略，后续原样传回 nextCursor；服务端以 null 表示结束。
+  async getExploreProjects(params: TfExploreParams, options?: Pick<TfRequestOptions, "signal">): Promise<TfExplorePage> {
+    if (!Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > 50) throw new Error("每页数量必须为 1 至 50 的整数");
+    const { data } = await client.post<TfResponse<TfExplorePage>>("/v1/explore/getProjects", params, exploreOptions(options));
+    const page = responseData(data, "加载探索项目失败");
+    if (!page || !Array.isArray(page.list) || page.list.length > params.limit
+      || (page.nextCursor !== null && (typeof page.nextCursor !== "string" || !page.nextCursor.trim()))) throw new Error("探索分页响应格式不正确");
+    if (!Array.isArray(page.categories) || page.categories.some(item => !item || typeof item.id !== "string" || !item.id.trim()
+      || typeof item.name !== "string" || !item.name.trim()) || new Set(page.categories.map(item => item.id)).size !== page.categories.length) throw new Error("探索分类响应格式不正确");
+    page.list.forEach(validateExploreProject);
+    if (new Set(page.list.map(project => project.id)).size !== page.list.length) throw new Error("探索项目 ID 重复");
+    return page;
+  },
+
+  async getExploreProject(projectId: string, options?: Pick<TfRequestOptions, "signal">): Promise<TfExploreDetail> {
+    validateExploreId(projectId);
+    const { data } = await client.post<TfResponse<TfExploreDetail>>("/v1/explore/getProject", { projectId }, exploreOptions(options));
+    const project = responseData(data, "加载作品详情失败");
+    validateExploreProject(project);
+    if (project.id !== projectId || typeof project.description !== "string"
+      || !isExploreUrl(project.videoUrl, true) || !isExploreUrl(project.shareUrl)) throw new Error("作品详情响应格式不正确");
+    return project;
+  },
+
+  // 设置期望状态而非 toggle，网络失败后重试不会反向切换；响应包含更新后的两项状态和计数。
+  async setExploreReaction(projectId: string, action: "like" | "collection", active: boolean, options?: TfRequestOptions): Promise<TfExploreReaction> {
+    validateExploreId(projectId);
+    const { data } = await client.post<TfResponse<TfExploreReaction>>("/v1/explore/setReaction", { projectId, action, active }, requestOptions(options));
+    const reaction = responseData(data, "更新作品互动失败");
+    validateExploreReaction(reaction);
+    return reaction;
+  },
+
+  // TF 返回只读展示数据：保留画布位置与分组，媒体使用可直接访问的 HTTP(S) URL，文本文件需展开为 text。
+  // handles 与连线的 sourceHandle/targetHandle 保留源节点端口 ID；未提供 handles 时前端使用默认 target in/source out。
+  async getExploreProcess(projectId: string, options?: Pick<TfRequestOptions, "signal">): Promise<TfExploreProcess> {
+    validateExploreId(projectId);
+    const { data } = await client.post<TfResponse<TfExploreProcess>>("/v1/explore/getProcess", { projectId }, exploreOptions(options));
+    const process = responseData(data, "加载制作过程失败");
+    if (!process || !Array.isArray(process.canvases) || !process.canvases.length) throw new Error("制作过程响应格式不正确");
+    const canvasIds = new Set<string>();
+    for (const canvas of process.canvases) {
+      if (!canvas || typeof canvas.id !== "string" || !canvas.id || canvasIds.has(canvas.id) || typeof canvas.name !== "string"
+        || !Array.isArray(canvas.nodes) || !Array.isArray(canvas.edges)) throw new Error("制作过程画布格式不正确");
+      canvasIds.add(canvas.id);
+      const nodes = new Map<string, typeof canvas.nodes[number]>();
+      for (const node of canvas.nodes) {
+        if (!node || typeof node.id !== "string" || !node.id || nodes.has(node.id) || typeof node.label !== "string"
+          || !node.position || ![node.position.x, node.position.y].every(Number.isFinite)
+          || [node.width, node.height].some(size => size !== undefined && (!Number.isFinite(size) || size <= 0))
+          || (node.parentNode !== undefined && typeof node.parentNode !== "string")
+          || (node.kind !== undefined && node.kind !== "group")
+          || [node.text, node.prompt].some(text => text !== undefined && typeof text !== "string")
+          || (node.media !== undefined && (!node.media || !["image", "video", "audio"].includes(node.media.type) || !isExploreUrl(node.media.url)))) throw new Error("制作过程节点格式不正确");
+        if (node.handles !== undefined) {
+          if (!Array.isArray(node.handles) || (node.kind === "group" && node.handles.length)) throw new Error("制作过程节点端口格式不正确");
+          const handleIds = new Set<string>();
+          for (const handle of node.handles) {
+            const dataTypes = Array.isArray(handle?.dataType) ? handle.dataType : [handle?.dataType];
+            if (!handle || typeof handle.id !== "string" || !handle.id.trim() || handleIds.has(handle.id)
+              || !["source", "target"].includes(handle.type) || (handle.label !== undefined && typeof handle.label !== "string")
+              || !dataTypes.length || dataTypes.some(type => typeof type !== "string" || !type.split(",").some(part => part.trim()))) throw new Error("制作过程节点端口格式不正确");
+            handleIds.add(handle.id);
+          }
+        }
+        nodes.set(node.id, node);
+      }
+      const checked = new Set<string>();
+      for (const node of canvas.nodes) {
+        const ancestors = new Set<string>();
+        let current: typeof node | undefined = node;
+        while (current && !checked.has(current.id)) {
+          if (ancestors.has(current.id)) throw new Error("制作过程分组存在循环");
+          ancestors.add(current.id);
+          if (current.parentNode !== undefined && nodes.get(current.parentNode)?.kind !== "group") throw new Error("制作过程分组不存在");
+          current = current.parentNode === undefined ? undefined : nodes.get(current.parentNode);
+        }
+        for (const id of ancestors) checked.add(id);
+      }
+      const edgeIds = new Set<string>();
+      for (const edge of canvas.edges) {
+        if (!edge || typeof edge.id !== "string" || !edge.id || edgeIds.has(edge.id) || !nodes.has(edge.source) || !nodes.has(edge.target)) throw new Error("制作过程连线格式不正确");
+        const source = nodes.get(edge.source)!;
+        const target = nodes.get(edge.target)!;
+        if (source.kind === "group" || target.kind === "group") throw new Error("制作过程分组不能连接端口");
+        for (const [node, id, type, fallback] of [[source, edge.sourceHandle, "source", "out"], [target, edge.targetHandle, "target", "in"]] as const) {
+          if (id !== undefined && (typeof id !== "string" || !id.trim()
+            || (node.handles === undefined ? id !== fallback : !node.handles.some(handle => handle.id === id && handle.type === type)))) throw new Error("制作过程连线端口不存在或方向不正确");
+          if (id === undefined && node.handles !== undefined && !node.handles.some(handle => handle.type === type)) throw new Error("制作过程连线端口不存在或方向不正确");
+        }
+        edgeIds.add(edge.id);
+      }
+    }
+    return process;
+  },
+
+  // 下载包根目录即项目根目录，包含原始画布 JSON 与 assets 等全部依赖；URL 为短期有效的 HTTPS 签名地址。
+  async getExploreDownload(projectId: string, options?: Pick<TfRequestOptions, "signal">): Promise<{ downloadUrl: string }> {
+    validateExploreId(projectId);
+    const { data } = await client.post<TfResponse<{ downloadUrl: string }>>("/v1/explore/getDownload", { projectId }, exploreOptions(options));
+    const download = responseData(data, "获取项目下载地址失败");
+    if (!isExploreUrl(download?.downloadUrl) || new URL(download.downloadUrl).protocol !== "https:") throw new Error("项目下载地址无效");
+    return download;
+  },
+
   async getSponsorList(options?: Pick<TfRequestOptions, "signal">): Promise<TfSponsor[]> {
     const { data } = await client.post<TfResponse<TfSponsor[]>>("/web/sponsor/getSponsorList", null, { signal: options?.signal, timeout: 20000 });
     const sponsors = responseData(data, "加载赞助商失败");

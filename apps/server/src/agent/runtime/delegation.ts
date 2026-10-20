@@ -9,10 +9,11 @@ import { createCanvasContext } from "@/agent/bridge/canvas";
 import { createQuestionContext } from "@/agent/bridge/question";
 import { resolveWorkspacePath } from "@/utils/workspace/files";
 import { translateError, translateMessage } from "@/lib/i18n";
+import type { ThinkingLevel } from "@/lib/modelReasoning";
 
 export async function runDelegatedAgent(options: {
   cwd: string; parentFile: string; name: string; task: string;
-  providerId: string; modelId: string; thinkingLevel: "off" | "low" | "medium" | "high";
+  providerId: string; modelId: string; thinkingLevel?: ThinkingLevel;
   canvas?: CanvasContext; signal?: AbortSignal; send: (event: AgentEvent) => void; onProgress?: (text: string) => void;
 }) {
   const { cwd, parentFile, name, task, providerId, modelId, thinkingLevel, canvas, signal, onProgress } = options;

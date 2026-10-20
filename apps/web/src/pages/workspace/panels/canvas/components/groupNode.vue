@@ -1,7 +1,7 @@
 <template>
   <div class="groupNode" :class="{ selected, resizing: !!resize }">
     <input
-      v-if="editingLabel"
+      v-if="editingLabel && !readOnly"
       ref="labelInput"
       v-model="labelDraft"
       class="groupLabelInput nodrag nopan"
@@ -14,11 +14,11 @@
       @keydown.enter="confirmLabel"
       @keydown.esc.prevent="editingLabel = false"
       @blur="saveLabel" />
-    <span v-else class="groupLabel" tabindex="0" :title="`${data.label || '分组'}（双击编辑名称）`" @dblclick.stop="editLabel" @keydown.enter.stop.prevent="editLabel">
+    <span v-else class="groupLabel" :tabindex="readOnly ? undefined : 0" :title="readOnly ? data.label || '分组' : `${data.label || '分组'}（双击编辑名称）`" @dblclick.stop="editLabel" @keydown.enter.stop.prevent="editLabel">
       {{ data.label || "分组" }}
     </span>
     <button
-      v-for="corner in resizeCorners"
+      v-for="corner in readOnly ? [] : resizeCorners"
       :key="corner.name"
       class="resizeCorner nodrag nopan"
       :class="corner.name"
@@ -40,7 +40,7 @@ import { inject, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useVueFlow, type GraphNode, type NodeProps } from "@vue-flow/core";
 import { ElMessage } from "element-plus";
 
-const props = defineProps<NodeProps>();
+const props = withDefaults(defineProps<NodeProps & { readOnly?: boolean }>(), { readOnly: false });
 const flow = useVueFlow();
 const batchHistory = inject<((action: () => Promise<void>) => Promise<void>) | undefined>("batchCanvasHistory", undefined);
 const editingLabel = ref(false);
@@ -66,6 +66,7 @@ const resize = shallowRef<{
 }>();
 
 async function editLabel() {
+  if (props.readOnly) return;
   labelDraft.value = props.data.label || "分组";
   editingLabel.value = true;
   await nextTick();
@@ -73,23 +74,24 @@ async function editLabel() {
 }
 
 function saveLabel() {
-  if (!editingLabel.value) return;
+  if (props.readOnly || !editingLabel.value) return;
   const label = labelDraft.value.trim();
   if (label) flow.updateNodeData(props.id, { label });
   editingLabel.value = false;
 }
 
 function confirmLabel(event: KeyboardEvent) {
-  if (event.isComposing) return;
+  if (props.readOnly || event.isComposing) return;
   event.preventDefault();
   saveLabel();
 }
 
 function startResize(event: PointerEvent, corner: ResizeCorner) {
-  if (event.button !== 0 || resize.value) return;
+  if (props.readOnly || event.button !== 0 || resize.value) return;
   const node = flow.findNode(props.id);
   if (!node) return;
   const action = () => new Promise<void>(resolve => {
+    if (props.readOnly) return resolve();
     const element = event.currentTarget as HTMLElement;
     resize.value = {
       node, corner, element, pointerId: event.pointerId,
@@ -106,6 +108,7 @@ function startResize(event: PointerEvent, corner: ResizeCorner) {
 }
 
 function moveResize(event: PointerEvent) {
+  if (props.readOnly) return finishResize();
   const state = resize.value;
   if (!state || event.pointerId !== state.pointerId) return;
   if (flow.findNode(props.id) !== state.node) return finishResize();
@@ -138,10 +141,16 @@ function finishResize(event?: PointerEvent) {
 }
 
 onBeforeUnmount(() => finishResize());
+watch(() => props.readOnly, readOnly => {
+  if (!readOnly) return;
+  editingLabel.value = false;
+  finishResize();
+});
 
 watch(
-  () => flow.getNodes.value.filter(node => node.parentNode === props.id),
+  () => props.readOnly ? [] : flow.getNodes.value.filter(node => node.parentNode === props.id),
   children => {
+    if (props.readOnly) return;
     // ACT: 拖动期间保持分组框不变，松手后由画布统一贴合内容。
     children.forEach(node => { node.expandParent = false; });
   },

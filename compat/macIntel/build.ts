@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "@toonflow/file";
 import { dirname, relative, resolve } from "node:path";
 import sharedConfig from "../../electrobun.config";
+import prepareMacDmg from "../../apps/desktop/scripts/macDmg";
 
 const projectDir = resolve(import.meta.dir, "../..");
 const compatDir = import.meta.dir;
@@ -43,4 +44,5 @@ for (const target of new Bun.Glob("**/*.ts").scanSync({ cwd: sourceDir, absolute
   writeFileSync(target, code);
 }
 const cli = resolve(compatDir, "node_modules/electrobun/bin/electrobun.cjs");
+if (mode === "build") await prepareMacDmg();
 await $`${process.execPath} ${cli} ${mode} ${mode === "build" ? ["--env=stable"] : []}`.cwd(compatDir);

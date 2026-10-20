@@ -162,6 +162,9 @@ jobs:
         if: matrix.target == 'macX64'
         working-directory: compat/macIntel
         run: bun install --frozen-lockfile
+      - name: 编译 macOS 13 Intel 原生 SDK
+        if: matrix.target == 'macX64'
+        run: bun compat/macIntel/prepareNative.ts
       - name: 准备 Electrobun SDK
         if: matrix.target != 'macX64' && matrix.target != 'androidArm64'
         run: bun apps/desktop/node_modules/electrobun/bin/electrobun.cjs prepare

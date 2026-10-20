@@ -43,6 +43,7 @@ export default {
     },
     mac: {
       icons: "packages/assets/logo.iconset",
+      entitlements: { "com.apple.security.device.audio-input": true },
       // ACT: CI 为 ARM 同时开启签名与公证；本地未配置凭据时仍可构建测试包。
       codesign: process.env.macCodesign === "1",
       notarize: process.env.macCodesign === "1",

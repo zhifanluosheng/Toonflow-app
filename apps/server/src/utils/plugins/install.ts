@@ -205,14 +205,14 @@ export function skillPath(value: string, directory = false) {
   return path;
 }
 
-function skillEntryPaths() {
+function skillEntryPaths(maxEntries = 2000) {
   const entries = new Set<string>();
   const paths = new Map<string, { path: string; directory: boolean }>();
   return (original: string, directory: boolean) => {
     const path = skillPath(original, directory);
     if (entries.has(path.toLowerCase())) invalid("技能包包含重名文件或目录");
     entries.add(path.toLowerCase());
-    if (entries.size > 2000) invalid("技能包最多包含 2000 个文件和目录");
+    if (entries.size > maxEntries) invalid(`技能包最多包含 ${maxEntries} 个文件和目录`);
     const parts = path ? path.split("/") : [];
     for (let index = 1; index <= parts.length; index++) {
       const nested = parts.slice(0, index).join("/");
@@ -225,7 +225,9 @@ function skillEntryPaths() {
   };
 }
 
-export function skillZip(bytes: Uint8Array) {
+export function skillZip(bytes: Uint8Array, options: { maxBytes?: number; maxEntries?: number; fileModes?: Map<string, number> } = {}) {
+  const byteLimit = options.maxBytes ?? maxBytes;
+  const entryLimit = options.maxEntries ?? 2000;
   const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let end = data.length - 22;
   for (; end >= Math.max(0, data.length - 65557); end--) {
@@ -236,9 +238,9 @@ export function skillZip(bytes: Uint8Array) {
   const start = data.readUInt32LE(end + 16);
   if (data.readUInt16LE(end + 4) || data.readUInt16LE(end + 6) || data.readUInt16LE(end + 8) !== count
     || count === 0xffff || start + data.readUInt32LE(end + 12) !== end) invalid("请使用未分卷的普通 ZIP 技能包，不支持 ZIP64");
-  if (count > 2000) invalid("技能包最多包含 2000 个文件和目录");
-  const entryPath = skillEntryPaths();
-  const entries: { path: string; directory: boolean; size: number; checksum: number; method: number; start: number; end: number; header: number }[] = [];
+  if (count > entryLimit) invalid(`技能包最多包含 ${entryLimit} 个文件和目录`);
+  const entryPath = skillEntryPaths(entryLimit);
+  const entries: { path: string; directory: boolean; size: number; checksum: number; method: number; start: number; end: number; header: number; mode: number }[] = [];
   let total = 0;
   let offset = start;
   // ACT: 仅支持普通存储/Deflate ZIP；先验证目录和声明大小，再限量解压，不将压缩包直接释放到磁盘。
@@ -262,7 +264,7 @@ export function skillZip(bytes: Uint8Array) {
     if (![0, 0x4000, 0x8000].includes(kind)) invalid("ZIP 技能包不能包含链接、设备或其他特殊文件");
     const path = entryPath(original, directory);
     total += size;
-    if (size === 0xffffffff || compressed === 0xffffffff || total > maxBytes) invalid("技能包解压后不能超过 20 MB", 413);
+    if (size === 0xffffffff || compressed === 0xffffffff || total > byteLimit) invalid(`技能包解压后不能超过 ${byteLimit / 1024 / 1024} MB`, 413);
     if (directory && size !== 0 || method === 0 && compressed !== size) invalid("ZIP 技能包文件大小无效");
     if (data.readUInt32LE(header) !== 0x04034b50 || data.readUInt16LE(header + 6) !== flags
       || data.readUInt16LE(header + 8) !== method || data.readUInt16LE(header + 26) !== nameLength) invalid("ZIP 技能包条目不一致");
@@ -270,7 +272,7 @@ export function skillZip(bytes: Uint8Array) {
     if (content + compressed > start || !data.subarray(header + 30, header + 30 + nameLength).equals(data.subarray(offset + 46, offset + 46 + nameLength))) invalid("ZIP 技能包条目不一致");
     if (!(flags & 8) && (data.readUInt32LE(header + 14) !== checksum || data.readUInt32LE(header + 18) !== compressed
       || data.readUInt32LE(header + 22) !== size)) invalid("ZIP 技能包条目大小或校验值不一致");
-    entries.push({ path, directory, size, checksum, method, start: content, end: content + compressed, header });
+    entries.push({ path, directory, size, checksum, method, start: content, end: content + compressed, header, mode: (attributes >>> 16) & 0o777 });
     offset = next;
   }
   if (offset !== end) invalid("ZIP 技能包目录长度不一致");
@@ -286,7 +288,10 @@ export function skillZip(bytes: Uint8Array) {
       content = entry.method === 0 ? compressed : inflateRawSync(compressed, { maxOutputLength: Math.max(1, entry.size) });
     } catch { return invalid("ZIP 技能包损坏或实际解压大小超过声明值"); }
     if (content.byteLength !== entry.size || crc32(content) !== entry.checksum) invalid("ZIP 技能包文件大小或校验值错误");
-    if (!entry.directory && !entry.path.startsWith("__MACOSX/") && entry.path.split("/").at(-1) !== ".DS_Store") result.set(entry.path, content);
+    if (!entry.directory && !entry.path.startsWith("__MACOSX/") && entry.path.split("/").at(-1) !== ".DS_Store") {
+      result.set(entry.path, content);
+      options.fileModes?.set(entry.path, entry.mode);
+    }
   }
   return result;
 }

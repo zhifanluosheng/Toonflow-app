@@ -5,13 +5,15 @@ import type { AgentEvent } from "@/agent/runtime/types";
 import { validateFields } from "@/lib/middleware";
 import u from "@/utils";
 import { translateError, translateMessage } from "@/lib/i18n";
+import { thinkingLevels } from "@/lib/modelReasoning";
+import { getAgentModelConfiguration } from "@/agent/runtime/model";
 
 const inputSchema = z.object({
   prompt: z.string().trim(), directory: z.string().min(1),
   attachments: u.agent.agentAttachmentsSchema.optional(),
   mentions: u.agent.agentMentionsSchema.optional(),
   providerId: z.string().min(1), modelId: z.string().min(1),
-  thinkingLevel: z.enum(["off", "low", "medium", "high"]).optional(),
+  thinkingLevel: z.enum(thinkingLevels).optional(),
   sessionFile: z.string().regex(/^[\w-]+\.jsonl$/).optional(),
   resendFrom: z.string().min(1).max(128).optional(),
   canvas: z.strictObject({
@@ -29,6 +31,7 @@ const inputSchema = z.object({
 export default Router().post("/", validateFields(inputSchema.shape), async (req, res) => {
   const { directory, canvas, ...options } = req.body as z.infer<typeof inputSchema>;
   const cwd = await u.workspace.resolveWorkspace(req, directory);
+  getAgentModelConfiguration(options.providerId, options.modelId, options.thinkingLevel);
   res.set({ "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no" });
   res.flushHeaders();
   const send = (event: AgentEvent) => {

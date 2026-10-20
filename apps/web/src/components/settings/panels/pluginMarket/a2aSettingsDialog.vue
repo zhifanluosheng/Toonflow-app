@@ -6,9 +6,7 @@
         <div class="directoryField"><el-input v-model="directory" dir="ltr" placeholder="选择允许团队操作的工作区" /><workspacePicker v-model="directory" :disabled="loading || saving" /></div>
       </el-form-item>
       <el-form-item label="文本模型">
-        <el-select v-model="selectedModel" placeholder="选择团队使用的文本模型" filterable style="width: 100%">
-          <el-option v-for="model in modelChoices" :key="model.value" :value="model.value" :label="model.label" />
-        </el-select>
+        <modelPopover v-model="selectedModel" v-model:reasoningEffort="reasoningEffort" :active="visible" :disabled="loading || saving" />
       </el-form-item>
       <el-form-item v-if="url" label="服务地址"><el-input :modelValue="url" dir="ltr" readonly /></el-form-item>
       <el-form-item v-if="token" label="访问令牌"><el-input :modelValue="token" type="password" dir="ltr" showPassword readonly autocomplete="off" /></el-form-item>
@@ -24,18 +22,21 @@
 
 <script setup lang="ts">
 import axios from "axios";
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
+import type { ThinkingLevel } from "@toonflow/server/modelReasoning";
+import modelPopover from "@/components/modelPopover.vue";
 import workspacePicker from "@/pages/home/workspacePicker.vue";
 import { modelChoices } from "@/stores/settings";
 
-type A2aSettings = { enabled: boolean; directory: string; token?: string; url: string; providerId?: string; modelId?: string; thinkingLevel?: string };
+type A2aSettings = { enabled: boolean; directory: string; token?: string; url: string; providerId?: string; modelId?: string; thinkingLevel?: ThinkingLevel };
 const emit = defineEmits<{ saved: []; closed: [] }>();
 const visible = ref(true);
 const enabled = ref(false);
 const directory = ref("");
 const selectedModel = ref("");
-const thinkingLevel = ref<string>();
+const thinkingLevel = ref<ThinkingLevel>();
+const reasoningEffort = computed({ get: () => thinkingLevel.value ?? "", set: (value: string) => { thinkingLevel.value = value ? value as ThinkingLevel : undefined; } });
 const token = ref("");
 const url = ref("");
 const loading = ref(true);
