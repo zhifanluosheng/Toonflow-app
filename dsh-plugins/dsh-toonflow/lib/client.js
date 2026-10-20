@@ -26,8 +26,8 @@ window.__ModuleLoader__.load({
 .tfw-shell{position:relative;display:flex;flex-direction:column;flex:1;height:100%;min-height:0;min-width:0;box-sizing:border-box;background:var(--dsw-alias-bg-base,#1b1b1c);color:var(--dsw-alias-label-primary,#e8e8ec);font-family:inherit;font-size:13px;line-height:20px}
 .tfw-frame-wrap{position:relative;flex:1;min-height:0;min-width:0;display:flex;background:var(--dsw-alias-bg-base,#1b1b1c)}
 .tfw-frame{flex:1;width:100%;height:100%;min-height:0;border:0;display:block;background:transparent}
-/* 与宿主接缝：上/左 1px 亮边 + 内侧灰色投影（与 Nuomi Terminal 面板保持一致） */
-.tfw-frame-wrap::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;border-top:1px solid var(--dsw-alias-border-l2,rgba(232,232,236,.16));border-left:1px solid var(--dsw-alias-border-l2,rgba(232,232,236,.16));box-shadow:inset 22px 0 28px -22px rgba(0,0,0,.55),inset 0 22px 28px -22px rgba(0,0,0,.42)}
+/* 与宿主接缝：上/左 1px 亮边（不做阴影投影，保持干净） */
+.tfw-frame-wrap::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;border-top:1px solid var(--dsw-alias-border-l2,rgba(232,232,236,.16));border-left:1px solid var(--dsw-alias-border-l2,rgba(232,232,236,.16))}
 .tfw-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;min-height:0}
 .tfw-card{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:560px;padding:28px 32px;border:1px solid var(--dsw-alias-border-l2,#3a3a40);border-radius:12px;background:var(--dsw-alias-bg-module-platform,#202023);text-align:center}
 .tfw-card h2{margin:0;font-size:16px;line-height:24px;font-weight:600}
